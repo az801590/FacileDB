@@ -72,16 +72,32 @@ void findAll(int fd)
 
     while(read(fd, &current, sizeof(blockBuffer)))
     {
-        memcpy(data, current.data, MAX_DATA_SIZE);
-
-        for(char *p = NULL; p = strstr(data, ",");)
+        if(!current.delete)
         {
-            *p = '\n';
+            memcpy(data, current.data, MAX_DATA_SIZE);
+
+            for(char *p = NULL; p = strstr(data, ",");)
+            {
+                *p = '\n';
+            }
+            
+            printf("------------\n");
+            printf("%s\n", data);
+            printf("------------\n");
         }
-        
-        printf("------------\n");
-        printf("%s\n", data);
-        printf("------------\n");
+    }
+}
+
+void deleteAll(int fd)
+{
+    blockBuffer current;
+
+    while(read(fd, &current, sizeof(blockBuffer)))
+    {
+        lseek(fd, -sizeof(blockBuffer), SEEK_CUR);
+
+        current.delete = true;
+        write(fd, &current, sizeof(blockBuffer));
     }
 }
 
@@ -186,6 +202,7 @@ int main(int argc, char *argv[])
             {
                 if(status == 2)
                 {
+                    //use
                     if(currentDbFile = useDB(argu))
                     {
                         fileDescription = getFileInfo(currentDbFile);
@@ -220,6 +237,12 @@ int main(int argc, char *argv[])
                         else if(status == 5)
                         {
                             //delete
+                            lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
+
+                            if(strcmp(argu, "*") == 0)
+                            {
+                                deleteAll(currentDbFile);
+                            }
 
                         }
 
