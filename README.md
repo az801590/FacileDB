@@ -1,7 +1,17 @@
 # myDB
 
-## INSERT
+## Select databases
+List all db files
+```
+list
+```
 
+Select or create a db file
+```
+use <dbFileName>
+```
+
+## INSERT
 ### Insert with file
 file format
 ```
@@ -15,5 +25,21 @@ file format
 
 command
 ```
-put <filename>
+put <fileName>
+```
+
+## Find
+### Find all data
+```
+find *
+```
+### Find with certain key-value
+```
+find key:value
+```
+
+## Delete
+### Delete all
+```
+delete *
 ```
