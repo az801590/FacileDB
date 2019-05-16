@@ -15,8 +15,8 @@
 
 #include <dirent.h>
 
-#define MAX_DATA_SIZE 1<<8 //size:2k
-#define INPUT_BUFFER 1<<8
+#define MAX_DATA_SIZE 2048 
+#define INPUT_BUFFER 128
 #define MAX_FILENAME 32
 
 typedef struct
@@ -28,7 +28,7 @@ typedef struct
 typedef struct
 {
     uint64_t rid;
-    size_t data[MAX_DATA_SIZE];
+    size_t data[(MAX_DATA_SIZE/sizeof(size_t))+1];
     size_t nextOffset;
     size_t createTime;
     bool delete;
@@ -36,11 +36,19 @@ typedef struct
 
 void putOneRow(int, fileInfo*, char*);
 void inputByFile(FILE*, int, fileInfo*);
+bool findOneRow(char*, char*, char*, char*);
+int seqFind(int, char*);
+char **splitKeyValue(char*);
 
 
 time_t getTime()
 {
     return time(NULL);
+}
+
+double timeSpend(clock_t t1, clock_t t2)
+{
+    return (t2-t1)/(double)(CLOCKS_PER_SEC);
 }
 
 void blockInit(blockBuffer *inputBuffer, fileInfo *fileDescription)
@@ -65,32 +73,11 @@ fileInfo *getFileInfo(int fd)
     return (fileInfo*) mmap(NULL, sizeof(fileInfo), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 }
 
-void findAll(int fd)
+int findAll(int fd)
 {
-    /*
-    blockBuffer current;
-    char data[MAX_DATA_SIZE] = {0};
-
-    while(read(fd, &current, sizeof(blockBuffer)))
-    {
-        if(!current.delete)
-        {
-            memcpy(data, current.data, MAX_DATA_SIZE);
-
-            for(char *p = NULL; p = strstr(data, ",");)
-            {
-                *p = '\n';
-            }
-            
-            printf("------------\n");
-            printf("%s\n", data);
-            printf("------------\n");
-        }
-    }
-    */
-
     blockBuffer current;
     char *p = NULL;
+    int count = 0;
 
     while(read(fd, &current, sizeof(blockBuffer)))
     {
@@ -109,71 +96,117 @@ void findAll(int fd)
             }
 
             printf("------------\n");
+
+            count++;
         }
     }
+
+    return count;
 }
 
-void seqFind(int fd, char *str)
+char **splitKeyValue(char *str)
 {
-    char *p = NULL;
-    bool keyPare = false, valuePare = false;
-    char output[MAX_DATA_SIZE] = {0};
+    char **keyValue = malloc(2*sizeof(char*));
+    keyValue[0] = str;
+    keyValue[1] = strchr(str, ':');
 
-    char *key = str;
-    char *value = strchr(str, ':');
-    *value = '\0';
-    value++;
+    *keyValue[1] = '\0';
+    keyValue[1]++;
+
+    return keyValue;
+}
+
+int seqFind(int fd, char *str)
+{
+    char output[MAX_DATA_SIZE] = {0};
+    int count = 0;
+
+    char **temp = splitKeyValue(str);
+    char *key = temp[0];
+    char *value = temp[1];
 
     blockBuffer current;
     while(read(fd, &current, sizeof(blockBuffer)))
     {
         if(!current.delete)
         {
-            keyPare = valuePare = false;
             memset(output, 0, MAX_DATA_SIZE);
             strcpy(output, "------------\n");
-            p = (char*)current.data;
+            //char *p = (char*) current.data;
 
-            while(*p)
+            if(findOneRow((char*)current.data, key, value, output))
             {
-                if(strcmp(p, key) == 0)
-                {
-                    keyPare = true;
-                }
-                strcat(output, p);
-                strcat(output, " : ");
-                p += strlen(p) + 1;
-
-                if(keyPare && strcmp(p, value) == 0)
-                {
-                    valuePare = true;
-                }
-                strcat(output, p); 
-                strcat(output, "\n");           
-                p +=strlen(p) + 2;
-            }
-
-            strcat(output, "------------\n");
-
-            if(keyPare && valuePare)
-            {
+                count++;
                 printf("%s", output);
             }
         }
     }
+
+    free(temp);
+    return count;
 }
 
-void deleteAll(int fd)
+bool findOneRow(char *str, char *key, char*value, char *output)
+{
+    bool keyPare = false, valuePare = false;
+    char *p = str;
+
+    while(*p)
+    {
+        if(strcmp(p, key) == 0)
+        {
+            keyPare = true;
+        }
+        else
+        {
+            keyPare = false;
+        }
+
+        strcat(output, p);
+        strcat(output, " : ");
+        p += strlen(p) + 1;
+
+        if(keyPare && strcmp(p, value) == 0)
+        {
+            valuePare = true;
+        }
+
+        strcat(output, p);
+        strcat(output, "\n");
+        p += strlen(p) + 2;
+    }
+
+    strcat(output, "------------\n");
+
+    if(valuePare)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+int deleteAll(int fd)
 {
     blockBuffer current;
+    int count = 0;
 
     while(read(fd, &current, sizeof(blockBuffer)))
     {
-        lseek(fd, -sizeof(blockBuffer), SEEK_CUR);
-
-        current.delete = true;
-        write(fd, &current, sizeof(blockBuffer));
+        if(!(current.delete))
+        {
+            current.delete = true;
+            lseek(fd, -sizeof(blockBuffer), SEEK_CUR);
+            if(!(write(fd, &current, sizeof(blockBuffer))))
+            {
+                printf("Write error!\n");
+            }
+            count++;
+        }
     }
+    return count;
 }
 
 int putByFile(FILE *f, int fd, fileInfo *fileDescription)
@@ -189,6 +222,7 @@ int putByFile(FILE *f, int fd, fileInfo *fileDescription)
     while(fgets(buff, MAX_DATA_SIZE, f) != NULL)
     {
         buff[strlen(buff)-1] = '\0';
+        
         if(i == 0)
         {
             position = output;
@@ -197,20 +231,44 @@ int putByFile(FILE *f, int fd, fileInfo *fileDescription)
         }
         else
         {
-            if(*buff = '@')
+            if(*buff == '@')
             {
-                //format it
-                key = temp + 1;
-                value = strchr(temp, ':');
-                *value = '\0';
-                value ++;
+                /*
+                ** For bug in file youtube.rec
+                **
+                */
+                if((value = strchr(temp, ':')))
+                {
+                    //format it
+                    key = temp + 1;
+                    //value = strchr(temp, ':');
+                    *value = '\0';
+                    value ++;
 
-                strcpy(position, key);
-                position += strlen(key) + 1;
-                strcpy(position, value);
-                position += strlen(value) + 2;
-                //end of format
-                i++;
+                    strcpy(position, key);
+                    position += strlen(key) + 1;
+
+                    if(strcmp(value, "") == 0)
+                    {
+                        strcpy(position, " ");
+                    }
+                    else
+                    {
+                        strcpy(position, value);
+                    }
+
+                    position += strlen(value) + 2;
+                    //end of format
+                    i++;
+                }
+                else
+                {
+                    strcat(temp, buff);
+                }
+
+                /*
+                **
+                */
 
                 if(*(buff + 1) == '\0')
                 {
@@ -218,6 +276,7 @@ int putByFile(FILE *f, int fd, fileInfo *fileDescription)
                     memset(output, 0, MAX_DATA_SIZE);
                     count++;
                     i = 0;
+                    //printf("%d\n", count);
                 }
                 else
                 {
@@ -236,6 +295,43 @@ int putByFile(FILE *f, int fd, fileInfo *fileDescription)
     return count;
 }
 
+int deleteFromFind(int fd, char *str)
+{
+    blockBuffer current;
+    char output[MAX_DATA_SIZE] = {0};
+    int count = 0;
+    char *p = NULL;
+
+    char **temp = splitKeyValue(str);
+    char *key = temp[0];
+    char *value = temp[1];
+
+    while(read(fd, &current, sizeof(blockBuffer)))
+    {
+        if(!current.delete)
+        {
+            memset(output, 0, MAX_DATA_SIZE);
+            strcpy(output, "------------\n");
+            p = (char*)current.data;
+
+            if(findOneRow(p, key, value, output))
+            {
+                count++;
+                current.delete = true;
+                lseek(fd, -sizeof(blockBuffer), SEEK_CUR);
+                if(!(write(fd, &current, sizeof(blockBuffer))))
+                {
+                    printf("Write error!\n");
+                }
+                lseek(fd, sizeof(blockBuffer), SEEK_CUR);
+            }
+        }
+    }
+
+    free(temp);
+    return count;
+}
+
 void putOneRow(int currentDbFile, fileInfo *fileDescription, char *one)
 {
     blockBuffer inputBuffer;
@@ -243,7 +339,10 @@ void putOneRow(int currentDbFile, fileInfo *fileDescription, char *one)
 
     memcpy(inputBuffer.data, one, MAX_DATA_SIZE);
     lseek(currentDbFile, 0, SEEK_END);
-    write(currentDbFile, &inputBuffer, sizeof(blockBuffer));
+    if(!(write(currentDbFile, &inputBuffer, sizeof(blockBuffer))))
+    {
+        printf("Write error!\n");
+    }
 }
 
 void listAllDbFiles(const char *dir)
@@ -281,7 +380,10 @@ int useDB(const char *filename)
         fd = open(finalFilename, O_RDWR | O_CREAT, 0666);
         fileInfo new;
         fileInfoInit(&new);
-        write(fd, &new, sizeof(fileInfo));
+        if(!(write(fd, &new, sizeof(fileInfo))))
+        {
+            printf("Write error!\n");
+        }
     }
 
     //close(fd);
@@ -293,8 +395,9 @@ int main(int argc, char *argv[])
     int status = 0;
     char buff[INPUT_BUFFER];
     char *argu = NULL;
-    int currentDbFile;
+    int currentDbFile = -1;
     bool fileSelected = false;
+    clock_t start, end;
     fileInfo *fileDescription = NULL;
 
     printf("Database start.\n> ");
@@ -348,7 +451,7 @@ int main(int argc, char *argv[])
                 if(status == 2)
                 {
                     //use
-                    if(currentDbFile = useDB(argu))
+                    if((currentDbFile = useDB(argu)))
                     {
                         fileDescription = getFileInfo(currentDbFile);
                         printf("Switch to %s.\n", argu);
@@ -361,6 +464,7 @@ int main(int argc, char *argv[])
                         if(status == 3)
                         {
                             //put
+                            start = clock();
                             /*
                             blockBuffer inputBuffer;
                             blockInit(&inputBuffer, fileDescription);
@@ -372,33 +476,46 @@ int main(int argc, char *argv[])
 
                             //put by file
                             FILE *f = fopen(argu, "r");
-                            printf("Records: %d\n", putByFile(f, currentDbFile, fileDescription));
+                            printf("Records: %d\t", putByFile(f, currentDbFile, fileDescription));
+                            fclose(f);
+
+                            end = clock();
+                            printf("Time: %lfsec\n", timeSpend(start, end));
                         }
                         else if(status == 4)
                         {
                             //find
+                            start = clock();
                             lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
 
                             if(strcmp(argu, "*") == 0)
                             {
-                                findAll(currentDbFile);
+                                printf("Records: %d\t", findAll(currentDbFile));
                             }
                             else
                             {
-                                seqFind(currentDbFile, argu);
+                                printf("Records: %d\t", seqFind(currentDbFile, argu));
                             }
+                            end = clock();
 
+                            printf("Time: %lfsec\n", timeSpend(start, end));
                         }
                         else if(status == 5)
                         {
                             //delete
+                            start = clock();
                             lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
 
                             if(strcmp(argu, "*") == 0)
                             {
-                                deleteAll(currentDbFile);
+                                printf("Delete: %d\t", deleteAll(currentDbFile));
                             }
-
+                            else
+                            {
+                                printf("Relete: %d\t", deleteFromFind(currentDbFile, argu));
+                            }
+                            end = clock();
+                            printf("Time: %lfsec\n", timeSpend(start, end));
                         }
 
                     }
@@ -426,7 +543,6 @@ int main(int argc, char *argv[])
 
     if(fileDescription)
     {
-        //printf("%ld\t%ld\n", fileDescription->amountOfData, fileDescription->createTime);
         munmap(fileDescription, sizeof(fileInfo));
     }
 
