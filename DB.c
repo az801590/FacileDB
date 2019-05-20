@@ -17,7 +17,9 @@
 
 #define MAX_DATA_SIZE 2048 
 #define INPUT_BUFFER 128
-#define MAX_FILENAME 32
+#define MAX_FILENAME 64
+#define MAX_INDEX_SIZE 120
+
 
 typedef struct
 {
@@ -34,16 +36,30 @@ typedef struct
     bool delete;
 } blockBuffer;
 
+typedef struct
+{
+    uint64_t rid;
+    char indexValue[MAX_INDEX_SIZE];
+    off_t offset;
+} indexBuffer;
+
 void putOneRow(int, fileInfo*, char*);
 void inputByFile(FILE*, int, fileInfo*);
 bool findOneRow(char*, char*, char*, char*);
-int seqFind(int, char*);
+int seqFind(int, char*, char*);
 char **splitKeyValue(char*);
+char *findValueWithKey(char*, char*);
+off_t findIndexFile(int, char*);
 
 
 time_t getTime()
 {
     return time(NULL);
+}
+
+time_t timeSpend2(time_t t1, time_t t2)
+{
+    return t2-t1;
 }
 
 double timeSpend(clock_t t1, clock_t t2)
@@ -53,8 +69,8 @@ double timeSpend(clock_t t1, clock_t t2)
 
 void blockInit(blockBuffer *inputBuffer, fileInfo *fileDescription)
 {
-    inputBuffer->rid = fileDescription->amountOfData;
     fileDescription->amountOfData ++;
+    inputBuffer->rid = fileDescription->amountOfData;
 
     memset(inputBuffer->data, '\0', sizeof(((blockBuffer*)0)->data));
     inputBuffer->nextOffset = -1;
@@ -72,6 +88,259 @@ fileInfo *getFileInfo(int fd)
 {
     return (fileInfo*) mmap(NULL, sizeof(fileInfo), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 }
+
+//index start
+int makeIndex(indexBuffer *indexArr, int fd, char *key)
+{
+    int count = 0;
+
+    char *findIndexValue = NULL;
+
+    blockBuffer current;
+    while(read(fd, &current, sizeof(blockBuffer)))
+    {
+        if(!current.delete)
+        {
+            findIndexValue = NULL;
+            findIndexValue = findValueWithKey((char*)current.data, key);
+            if(findIndexValue != NULL)
+            {
+                indexArr[count].rid = current.rid;
+                strncpy(indexArr[count].indexValue, findIndexValue, MAX_INDEX_SIZE);
+                indexArr[count].offset = lseek(fd, -sizeof(blockBuffer), SEEK_CUR);
+                lseek(fd, sizeof(blockBuffer), SEEK_CUR);
+                count++;
+            }
+        }
+    }
+
+    return count;
+}
+
+int cmp(const void *a, const void *b)
+{
+    indexBuffer *f = (indexBuffer*)a;
+    indexBuffer *l = (indexBuffer*)b;
+
+    return strcmp(f->indexValue, l->indexValue);
+}
+
+void saveIndex(indexBuffer *indexArr, int count, const char *dirPath, const char *indexName)
+{
+    int num = -1;
+    int fd = -1;
+    char finalFilename[MAX_FILENAME] = {0};
+    char toNum[MAX_FILENAME] = {0};
+
+    for(int i=0;i<count;i++)
+    {
+        if(i % 64 == 0)
+        {
+            if(num != -1)
+            {
+                close(fd);
+            }
+
+            num++;
+            sprintf(toNum, "%d", num);
+
+            strcpy(finalFilename, dirPath);
+            strcat(finalFilename, "/");
+            strcat(finalFilename, indexName);
+            strcat(finalFilename, "/");
+            strcat(finalFilename, toNum);
+
+            fd = open(finalFilename, O_RDWR | O_CREAT, 0666);
+            //printf("%s\n", finalFilePath);
+        }
+
+        if(!write(fd, &indexArr[i], sizeof(indexBuffer)))
+        {
+            printf("Write error\n");
+        };
+    }
+    if(fd != -1)
+    {
+        close(fd);
+    }
+}
+
+indexBuffer *readIndex(int amountOfData, const char *currentIndexDir, char *indexName)
+{
+    int fd = -1;
+
+    char dir[MAX_FILENAME] = {0};
+    char indexFileName[MAX_FILENAME] = {0};
+
+    indexBuffer *indexArr = (indexBuffer*) calloc ((amountOfData/64)+1, sizeof(indexBuffer));
+    int count = 0;
+
+    for(int i=0;i<(amountOfData/64)+1;i++)
+    {
+        sprintf(indexFileName, "%d", i);
+        strcpy(dir, currentIndexDir);
+        strcat(dir, "/");
+        strcat(dir, indexName);
+        strcat(dir, "/");
+        strcat(dir, indexFileName);
+
+        if((fd = open(dir, O_RDWR, 0666)) != -1)
+        {
+            if(!read(fd, &indexArr[count], sizeof(indexBuffer)))
+            {
+                printf("read failed!\n");
+            } 
+            else
+            {
+                count++;
+            }        
+            close(fd);   
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    return indexArr;
+}
+
+int makeIndexKeyDir(const char *currentIndexDir, const char *indexName)
+{
+    char indexKeyDir[MAX_FILENAME] = {0};
+    strcpy(indexKeyDir, currentIndexDir);
+    strcat(indexKeyDir, "/");
+    strcat(indexKeyDir, indexName);
+
+    return mkdir(indexKeyDir, 0777);
+}
+
+//return value pointer
+char *findValueWithKey(char *str, char *key)
+{
+    bool keyPare = false;
+    char *p = str;
+    char *value = NULL;
+
+    while(*p)
+    {
+        if(strcmp(p, key) == 0)
+        {
+            keyPare = true;
+        }
+        else
+        {
+            keyPare = false;
+        }
+
+        p += strlen(p) + 1;
+
+        if(keyPare)
+        {
+            value = p;
+            break;
+        }
+
+        p += strlen(p) + 2;
+    }
+
+    return value;
+}
+
+void indexSearch(indexBuffer *indexArr, int amountOfData, const char *dir, char *indexName, char *value, int currentDbFile)
+{
+    int fd = -1;
+    char finalFilename[MAX_FILENAME] = {0};
+    char toNum[MAX_FILENAME] = {0};
+
+    //printf("%s\n", finalFilename);
+    
+    for(int i=0;i<amountOfData/64+1;i++)
+    {
+        if(i == amountOfData/64)
+        {
+            sprintf(toNum, "%d", i);
+            strcpy(finalFilename, dir);
+            strcat(finalFilename, "/");
+            strcat(finalFilename, indexName);
+            strcat(finalFilename, "/");
+            strcat(finalFilename, toNum);
+
+            fd = open(finalFilename, O_RDWR, 0666);
+            off_t offset = findIndexFile(fd, value);
+            if(offset>0)
+            {
+                char output[MAX_DATA_SIZE] = {0};
+                strcpy(output, "------------\n");
+                lseek(currentDbFile, offset, SEEK_SET);
+                blockBuffer current;
+                if(read(currentDbFile, &current, sizeof(current)))
+                {
+                    if(findOneRow((char*)current.data, indexName, value, output))
+                    {
+                        printf("%s\n", output);
+                    }
+                }
+            }
+
+            close(fd);
+        }
+        else
+        {
+            if(strncmp(indexArr[i+1].indexValue, value, MAX_INDEX_SIZE) > 0)
+            {
+                sprintf(toNum, "%d", i);
+                strcpy(finalFilename, dir);
+                strcat(finalFilename, "/");
+                strcat(finalFilename, indexName);
+                strcat(finalFilename, "/");
+                strcat(finalFilename, toNum);
+
+                fd = open(finalFilename, O_RDWR, 0666);
+                off_t offset = findIndexFile(fd, value);
+                if(offset>0)
+                {
+                    char output[MAX_DATA_SIZE] = {0};
+                    strcpy(output, "------------\n");
+                    lseek(currentDbFile, offset, SEEK_SET);
+                    blockBuffer current;
+                    if(read(currentDbFile, &current, sizeof(current)))
+                    {
+                        if(findOneRow((char*)current.data, indexName, value, output))
+                        {
+                            printf("%s\n", output);
+                        }
+                    }
+                }
+
+                close(fd);
+            }
+        }
+    }
+}
+
+off_t findIndexFile(int fd, char *value)
+{
+    indexBuffer current;
+    off_t offset = -1;
+
+    while(read(fd, &current, sizeof(current)))
+    {
+        int cmp = strncmp(current.indexValue, value, MAX_INDEX_SIZE);
+        if(cmp > 0)
+        {
+            break;
+        }
+        else if(cmp == 0)
+        {
+            offset = current.offset;
+            break;
+        }
+    }
+
+    return offset;
+}
+// end
 
 int findAll(int fd)
 {
@@ -116,14 +385,10 @@ char **splitKeyValue(char *str)
     return keyValue;
 }
 
-int seqFind(int fd, char *str)
+int seqFind(int fd, char *key, char *value)
 {
     char output[MAX_DATA_SIZE] = {0};
     int count = 0;
-
-    char **temp = splitKeyValue(str);
-    char *key = temp[0];
-    char *value = temp[1];
 
     blockBuffer current;
     while(read(fd, &current, sizeof(blockBuffer)))
@@ -142,7 +407,6 @@ int seqFind(int fd, char *str)
         }
     }
 
-    free(temp);
     return count;
 }
 
@@ -178,14 +442,7 @@ bool findOneRow(char *str, char *key, char*value, char *output)
 
     strcat(output, "------------\n");
 
-    if(valuePare)
-    {
-        return true;
-    }
-    else
-    {
-        return false;
-    }
+    return valuePare;
 }
 
 int deleteAll(int fd)
@@ -295,7 +552,30 @@ int putByFile(FILE *f, int fd, fileInfo *fileDescription)
     return count;
 }
 
-int deleteFromFind(int fd, char *str)
+void deleteByRid(int rid, int fd, fileInfo *fileDescription)
+{
+    blockBuffer current;
+
+    while(read(fd, &current, sizeof(blockBuffer)))
+    {
+        if(!current.delete)
+        {
+            if(current.rid == rid)
+            {
+                current.delete = true;
+                fileDescription->amountOfData --;
+                lseek(fd, -sizeof(blockBuffer), SEEK_CUR);
+                if(!(write(fd, &current, sizeof(blockBuffer))))
+                {
+                    printf("Write error!\n");
+                }
+                break;
+            }
+        }
+    }
+}
+
+int deleteFromFind(int fd, char *str, fileInfo *fileDescription)
 {
     blockBuffer current;
     char output[MAX_DATA_SIZE] = {0};
@@ -318,6 +598,7 @@ int deleteFromFind(int fd, char *str)
             {
                 count++;
                 current.delete = true;
+                fileDescription->amountOfData --;
                 lseek(fd, -sizeof(blockBuffer), SEEK_CUR);
                 if(!(write(fd, &current, sizeof(blockBuffer))))
                 {
@@ -368,16 +649,51 @@ void listAllDbFiles(const char *dir)
     closedir(dr);     
 }
 
+bool indexExisted(const char *dir, char *indexName)
+{
+    struct dirent *de; 
+    DIR *dr = opendir(dir);
+    bool find = false;
+
+    if(dr == NULL) 
+    { 
+        printf("Could not open current directory"); 
+        return false; 
+    }
+    while((de=readdir(dr))!=NULL)
+    {
+        if(strcmp(de->d_name, ".")!=0 && strcmp(de->d_name, "..")!=0)
+        {
+            if(strcmp(de->d_name, indexName) == 0)
+            {
+                find = true;
+                break;
+            }
+        }
+    }
+
+    closedir(dr);
+    return find;
+}
+
 int useDB(const char *filename)
 {
     char finalFilename[MAX_FILENAME] = "./dbs/";
     strcat(finalFilename, filename);
+    mkdir(finalFilename, 0777);
 
+    strcat(finalFilename, "/");
+    strcat(finalFilename, filename);
     int fd = open(finalFilename, O_RDWR , 0666);
 
     if(fd < 0)
     {
         fd = open(finalFilename, O_RDWR | O_CREAT, 0666);
+        strcpy(finalFilename, "./dbs/");
+        strcat(finalFilename, filename);
+        strcat(finalFilename, "/index");
+        mkdir(finalFilename, 0777);
+        
         fileInfo new;
         fileInfoInit(&new);
         if(!(write(fd, &new, sizeof(fileInfo))))
@@ -390,15 +706,47 @@ int useDB(const char *filename)
     return fd;
 }
 
+int *getRandom(int size)
+{
+    int temp, pos;
+    int *poker = (int*) malloc(size * sizeof(int));
+    srand(time(NULL));
+
+    poker[0] = size;
+    for(int i = 1; i < size; i++)
+    {
+        poker[i] = i;
+    }
+    
+    for(int i = 0; i < size; i++)
+    {
+        pos = (size - 1) * rand() / RAND_MAX;
+        temp = poker[i];
+        poker[i] = poker[pos];
+        poker[pos] = temp;
+    } 
+     
+    return poker;
+}
+
 int main(int argc, char *argv[])
 {
-    int status = 0;
     char buff[INPUT_BUFFER];
     char *argu = NULL;
-    int currentDbFile = -1;
-    bool fileSelected = false;
-    clock_t start, end;
+    char *argu2 = NULL;
+
     fileInfo *fileDescription = NULL;
+    bool fileSelected = false;
+
+    int currentDbFile = -1;
+    char currentDbFilePath[MAX_FILENAME] = {0};
+
+    char currentIndexDir[MAX_FILENAME] = {0};
+    char currentIndex[MAX_FILENAME] = {0};
+    indexBuffer *index = NULL;
+
+    clock_t start, end;
+    time_t t1, t2;
 
     printf("Database start.\n> ");
 
@@ -406,144 +754,240 @@ int main(int argc, char *argv[])
     {
         buff[strlen(buff)-1]='\0';
 
-        argu = strtok(buff, " ");
-        for(int i = 0;argu != NULL && i<2;i++)
+        argu = buff;
+        if((argu2 = strstr(buff, " ")))
         {
-            if(status == 0)
+            *argu2 = '\0';
+            argu2++;
+        }
+
+        if(strcmp(argu, "exit") == 0)
+        {
+            break;
+        }
+        else if(strcmp(argu, "list") == 0)
+        {
+            listAllDbFiles("./dbs");
+        }
+        else if(strcmp(argu, "use") == 0)
+        {
+            fileSelected = true;
+
+            if((currentDbFile = useDB(argu2)))
             {
-                if(strcmp(argu, "exit") == 0)
-                {
-                    //close the database
-                    status = -1;
-                    break;
-                }
-                else if(strcmp(argu, "list") == 0)
-                {
-                    status = 1;
-                    listAllDbFiles("./dbs");
-                    break;
-                }
-                else if(strcmp(argu, "use") == 0)
-                {
-                    status = 2;
-                    fileSelected = true;
-                }
-                else if(strcmp(argu, "put") == 0)
-                {
-                    status = 3;
-                }
-                else if (strcmp(argu, "find") == 0)
-                {
-                    status = 4;
-                }
-                else if(strcmp(argu, "delete") == 0)
-                {
-                    status = 5;
-                }
-                else
-                {
-                    printf("Command not found!\n");
-                    break;
-                }
+                strcpy(currentDbFilePath, "./dbs/");
+                strcat(currentDbFilePath, argu2);
+                fileDescription = getFileInfo(currentDbFile);
+
+                strcpy(currentIndexDir, currentDbFilePath);
+                strcat(currentIndexDir, "/index");
+
+                printf("Switch to %s.\n", argu2);
+            }
+        }
+        else if(strcmp(argu, "put") == 0)
+        {
+            if(fileSelected)
+            {
+                //put
+                start = clock();
+                t1 = getTime();
+                /*
+                blockBuffer inputBuffer;
+                blockInit(&inputBuffer, fileDescription);
+
+                memcpy(inputBuffer.data, argu2, MAX_DATA_SIZE);
+                lseek(currentDbFile, 0, SEEK_END);
+                write(currentDbFile, &inputBuffer, sizeof(blockBuffer));
+                */
+
+                //put by file
+                FILE *f = fopen(argu2, "r");
+                printf("Records: %d\t", putByFile(f, currentDbFile, fileDescription));
+                fclose(f);
+
+                t2 = getTime();
+                end = clock();
+                printf("Time: %lfsec\t%ldsec\n", timeSpend(start, end), timeSpend2(t1, t2));
             }
             else
             {
-                if(status == 2)
+                printf("Choose a db file first.\n");
+            }
+        }
+        else if (strcmp(argu, "find") == 0)
+        {
+            if(fileSelected)
+            {
+                start = clock();
+                t1 = getTime();
+                lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
+
+                if(strcmp(argu2, "*") == 0)
                 {
-                    //use
-                    if((currentDbFile = useDB(argu)))
-                    {
-                        fileDescription = getFileInfo(currentDbFile);
-                        printf("Switch to %s.\n", argu);
-                    }
+                    printf("Records: %d\t", findAll(currentDbFile));
                 }
-                else 
+                else
                 {
-                    if(fileSelected)
+                    char **temp = splitKeyValue(argu2);
+                    char *key = temp[0];
+                    char *value = temp[1];
+                    free(temp);
+
+                    if(indexExisted(currentIndexDir, key))
                     {
-                        if(status == 3)
+                        if(strcmp(currentIndex, key) != 0)
                         {
-                            //put
-                            start = clock();
-                            /*
-                            blockBuffer inputBuffer;
-                            blockInit(&inputBuffer, fileDescription);
+                            if(index!=NULL)
+                            {
+                                free(index);
+                            }
 
-                            memcpy(inputBuffer.data, argu, MAX_DATA_SIZE);
-                            lseek(currentDbFile, 0, SEEK_END);
-                            write(currentDbFile, &inputBuffer, sizeof(blockBuffer));
-                            */
-
-                            //put by file
-                            FILE *f = fopen(argu, "r");
-                            printf("Records: %d\t", putByFile(f, currentDbFile, fileDescription));
-                            fclose(f);
-
-                            end = clock();
-                            printf("Time: %lfsec\n", timeSpend(start, end));
+                            index = readIndex(fileDescription->amountOfData, currentIndexDir, key);
+                            strcpy(currentIndex, key);
                         }
-                        else if(status == 4)
-                        {
-                            //find
-                            start = clock();
-                            lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
 
-                            if(strcmp(argu, "*") == 0)
-                            {
-                                printf("Records: %d\t", findAll(currentDbFile));
-                            }
-                            else
-                            {
-                                printf("Records: %d\t", seqFind(currentDbFile, argu));
-                            }
-                            end = clock();
-
-                            printf("Time: %lfsec\n", timeSpend(start, end));
-                        }
-                        else if(status == 5)
-                        {
-                            //delete
-                            start = clock();
-                            lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
-
-                            if(strcmp(argu, "*") == 0)
-                            {
-                                printf("Delete: %d\t", deleteAll(currentDbFile));
-                            }
-                            else
-                            {
-                                printf("Relete: %d\t", deleteFromFind(currentDbFile, argu));
-                            }
-                            end = clock();
-                            printf("Time: %lfsec\n", timeSpend(start, end));
-                        }
+                        indexSearch(index, fileDescription->amountOfData, currentIndexDir, key, value, currentDbFile);
 
                     }
                     else
                     {
-                        printf("Choose a db file first.\n");
+                        printf("Records: %d\t", seqFind(currentDbFile, key, value));
                     }
+                    
+                }
+                t2 = getTime();
+                end = clock();
 
+                printf("Time: %lfsec\t%ldsec\n", timeSpend(start, end), timeSpend2(t1, t2));
+            }
+            else
+            {
+                printf("Choose a db file first.\n");
+            }
+        }
+        else if(strcmp(argu, "delete") == 0)
+        {
+            if(fileSelected)
+            {
+                start = clock();
+                time_t t1 = getTime();
+
+                lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
+
+                if(strcmp(argu2, "*") == 0)
+                {
+                    fileDescription->amountOfData = 0;
+                    printf("Delete: %d\t", deleteAll(currentDbFile));
+                }
+                /*
+                **
+                */
+                else if(strcmp(argu2, "1%") == 0)
+                {
+                    int total = fileDescription->amountOfData;
+                    int *random = getRandom(total);
+                    printf("Random success!\n");
+                    for(int i = 0; i < total / 100; i++)
+                    {
+                        lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
+                        deleteByRid(random[i], currentDbFile, fileDescription);
+                    }
+                    free(random);
+                    printf("Delete: %d\t", total / 100);
+                }
+                else if(strcmp(argu2, "10%") == 0)
+                {
+                    int total = fileDescription->amountOfData;
+                    int *random = getRandom(total);
+                    for(int i = 0; i < total / 10; i++)
+                    {
+                        lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
+                        deleteByRid(random[i], currentDbFile, fileDescription);
+                    }
+                    free(random);
+                    printf("Delete: %d\t", total / 10);
+                }
+                /*
+                **
+                */
+                else
+                {
+                    printf("Relete: %d\t", deleteFromFind(currentDbFile, argu2, fileDescription));
+                }
+
+                t2 = getTime();
+                end = clock();
+                printf("Time: %lfsec\t%ldsec\n", timeSpend(start, end), timeSpend2(t1, t2));
+            }
+            else
+            {
+                printf("Choose a db file first.\n");
+            }
+        }
+        else if(strcmp(argu, "index") == 0)
+        {
+            if(fileSelected)
+            {
+                if(fileDescription->amountOfData)
+                {
+                    start = clock();
+                    t1 = getTime();
+                    //make seq index
+                    if(makeIndexKeyDir(currentIndexDir, argu2) == 0)
+                    {
+                        lseek(currentDbFile, sizeof(fileInfo), SEEK_SET);
+
+                        indexBuffer *indexArr = (indexBuffer*) calloc((fileDescription->amountOfData), sizeof(indexBuffer));
+
+                        int indexCount = makeIndex(indexArr, currentDbFile, argu2);
+                        qsort(indexArr, indexCount, sizeof(indexBuffer), cmp);
+                        saveIndex(indexArr, indexCount, currentIndexDir, argu2);
+
+                        printf("Index: %d\t", indexCount);
+                        free(indexArr);
+                    }
+                    else
+                    {
+                        printf("Make index dir failed.\n");
+                    }
+                    
+                    t2 = getTime();
+                    end = clock();
+                    printf("Time: %lfsec\t%ldsec\n", timeSpend(start, end), timeSpend2(t1, t2));
+                }
+                else
+                {
+                    printf("No data in the database!\n");
                 }
             }
-
-            argu = strtok(NULL, " ");
+            else
+            {
+                printf("Choose a db file first.\n");
+            }
         }
-
-        if(status < 0)
+        else if(strcmp(argu, "getAmountOfData()") == 0)
         {
-            break;
+            if(fileSelected)
+            {
+                printf("Amount: %ld\n", fileDescription->amountOfData);
+            }
         }
         else
         {
-            status = 0;
-            printf("> ");
+            printf("Command not found!\n");
         }
+
+        printf("> ");
     }
 
     if(fileDescription)
     {
         munmap(fileDescription, sizeof(fileInfo));
+    }
+    if(index!=NULL)
+    {
+        free(index);
     }
 
     close(currentDbFile);
