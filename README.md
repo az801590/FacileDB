@@ -28,6 +28,14 @@ command
 put <fileName>
 ```
 
+## Index
+### make index
+Sequence index.
+```
+index <column>
+```
+
+
 ## Find
 ### Find all data
 ```
@@ -38,8 +46,13 @@ find *
 find key:value
 ```
 
+
 ## Delete
 ### Delete all
 ```
 delete *
+```
+### Delete with certain key-value
+```
+delete key:value
 ```
