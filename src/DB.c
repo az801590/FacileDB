@@ -14,18 +14,11 @@
 void putOneRow(int, FileInfo*, char*, DataInfo*, int);
 bool findOneRow(char*, char*, char*, char*);
 int seqFind(int, char*, char*);
-
-//char **splitKeyValue(char*);
 void *splitKeyValue(char*);
-
 char *findValueWithKey(char*, char*);
 DataInfo *arrayToBst(DataInfo*, int, int);
 
-
-
 //index start
-
-
 int cmp(const void *a, const void *b)
 {
     Index *f = (Index*)a;
@@ -106,19 +99,6 @@ void findByOffset(int fd, off_t offset)
     }
 }
 
-/*
-char **splitKeyValue(char *str)
-{
-    char **keyValue = malloc(2*sizeof(char*));
-    keyValue[0] = str;
-    keyValue[1] = strchr(str, ':');
-
-    *keyValue[1] = '\0';
-    keyValue[1]++;
-
-    return keyValue;
-}
-*/
 void *splitKeyValue(char *str)
 {
     int count = 0;
@@ -207,7 +187,10 @@ bool findOneRow(char *str, char *key, char*value, char *output)
     return valuePare;
 }
 
-int deleteAll(int fd)
+/*
+** DataInfo *ridIndex
+*/
+int deleteAll(int fd, void *ridIndex)
 {
     Block current;
     int count = 0;
@@ -425,7 +408,7 @@ void listAllDbFiles(const char *dir)
         printf("Could not open current directory"); 
         return; 
     }
-    while((de=readdir(dr))!=NULL)
+    while((de = readdir(dr))!=NULL)
     {
         if(strcmp(de->d_name, ".")!=0 && strcmp(de->d_name, "..")!=0)
         {
@@ -437,6 +420,175 @@ void listAllDbFiles(const char *dir)
     closedir(dr);     
 }
 
+/*
+*/
+void putByIn(void*, char*);
+void putOneRow2(ArrayExt*, void*);
+DataInfo *bstInsert(DataInfo*, DataInfo*);
+void *putFormat(void*);
+
+void saveRidIndex2(void*);
+void closeDb(void*);
+void ridIndexInOrderWrite(int, DataInfo*);
+
+/*
+** Array *sysInfo
+** arr[0] = int currentDbFile
+** arr2[0] = FileInfo *fileDescription
+** arr2[1] = DataInfo *ridIndex
+*/
+void putByIn(void *sysInfo, char *str)
+{
+    void *formatStr = putFormat(splitKeyValue(str));
+    putOneRow2(sysInfo, formatStr);
+}
+
+/*
+** Array *sysInfo
+** arr[0] = int currentDbFile
+** arr2[0] = FileInfo *fileDescription
+** arr2[1] = DataInfo *ridIndex
+*/
+void putOneRow2(ArrayExt *sysInfo, void *data)
+{
+    FileInfo *fileDescription = sysInfo->arr2[0];
+    int currentDbFile = ((int*) sysInfo->arr)[0];
+
+    Block inputBuffer;
+    blockInit(&inputBuffer, fileDescription);
+    memcpy(inputBuffer.data, data, MAX_DATA_SIZE);
+
+    lseek(currentDbFile, 0, SEEK_END);
+
+    DataInfo *ridOffset = malloc(sizeof(DataInfo));
+    ridOffset->rid = inputBuffer.rid;
+    ridOffset->offset = lseek(currentDbFile, 0, SEEK_CUR);
+    ridOffset->left = NULL;
+    ridOffset->right = NULL;
+
+    //write into file
+    if(!(write(currentDbFile, &inputBuffer, sizeof(Block))))
+    {
+        fprintf(stderr, "Write error!\n");
+    }
+
+    //write into ridBST
+    if(!(sysInfo->arr2[1] = bstInsert((DataInfo*) sysInfo->arr2[1], ridOffset))) 
+    {
+        fprintf(stderr, "rid write error!\n");
+    }
+}
+
+DataInfo *bstInsert(DataInfo *node, DataInfo *insert)
+{
+    if(node == NULL)
+    {
+        node = insert;
+    }
+    else
+    {
+        if((node->rid) < (insert->rid))
+        {
+            node->right = bstInsert(node->right, insert);
+        }
+        else if((node->rid) > (insert->rid))
+        {
+            node->left = bstInsert(node->left, insert);
+        }
+    }
+    return node;
+}
+
+/*
+** ArrayExt *sysInfo
+** arr2[0] = FileInfo *fileDescription
+** arr2[1] = DataInfo *ridIndex
+** arr2[2] = char *indexDirPath
+*/
+void closeDb(void *sysInfo)
+{
+    if(((ArrayExt*) sysInfo)->arr2[0] != NULL)
+    {
+        munmap(((ArrayExt*) sysInfo)->arr2[0], sizeof(FileInfo));
+    }
+    if(((ArrayExt*) sysInfo)->arr2[1])
+    {
+        saveRidIndex2(sysInfo);
+    }
+}
+
+/*
+** ArrayExt *ridInfo
+** arr2[0] = FileInfo *fileDescription
+** arr2[1] = DataInfo *bst
+** arr2[2] = char *dirPath
+*/
+void saveRidIndex2(void *ridInfo)
+{
+    char finalFilename[MAX_FILENAME] = {0};
+    strcpy(finalFilename, (char*) ((ArrayExt*) ridInfo)->arr2[2]);
+    strcat(finalFilename, "/rid/0");
+
+    int fd = open(finalFilename, O_RDWR | O_CREAT, 0666);
+
+    if(fd)
+    {
+        ridIndexInOrderWrite(fd, (DataInfo*) ((ArrayExt*) ridInfo)->arr2[1]);
+    }
+    else
+    {
+        fprintf(stderr, "%d: %s(rid save)\n", errno, strerror(errno));
+    }
+}
+
+
+void ridIndexInOrderWrite(int fd, DataInfo *node)
+{
+    if(node != NULL)
+    {
+        ridIndexInOrderWrite(fd, node->left);
+
+        if(!write(fd, &node->rid, sizeof(((DataInfo*)0)->rid)))
+        {
+            fprintf(stderr, "%d %s\n", errno, strerror(errno));
+        }
+        else
+        {
+            if(!write(fd, &node->offset, sizeof(((DataInfo*)0)->offset)))
+            {
+                fprintf(stderr, "%d %s\n", errno, strerror(errno));
+            }
+        }
+
+        ridIndexInOrderWrite(fd, node->right);
+    }
+}
+
+
+/*
+** input: ArrayExt* , saved with key-value pair in arr2 and length in len.
+** output: A space size MAX_DATA_SIZE and filled with key-value in format.
+** format: key \0 value \0 \0 key2 ... 
+** exception: over max-data-size, not done
+*/
+void *putFormat(void *keyValue)
+{
+    char *output = (char*) calloc(1, sizeof(MAX_DATA_SIZE));
+    char *p = output;
+
+    for(int i = 0; i < (((ArrayExt*) keyValue)->len); i++)
+    {
+        strcat(p, (char*) (((ArrayExt*) keyValue)->arr2)[2 * i]);
+        p += strlen((char*) (((ArrayExt*) keyValue)->arr2)[2 * i]) + 1;
+
+        strcat(p, (char*) (((ArrayExt*) keyValue)->arr2)[2 * i + 1]);
+        p += strlen((char*) (((ArrayExt*) keyValue)->arr2)[2 * i + 1]) + 2;
+    }
+
+    return output;
+}
+/*
+*/
 
 int useDB(const char *filename)
 {
@@ -455,6 +607,8 @@ int useDB(const char *filename)
         strcat(finalFilename, filename);
         strcat(finalFilename, "/index");
         mkdir(finalFilename, 0777);
+        strcat(finalFilename, "/rid");
+        mkdir(finalFilename, 0777);
         
         FileInfo new;
         fileInfoInit(&new);
@@ -464,10 +618,32 @@ int useDB(const char *filename)
         }
     }
 
-    //close(fd);
     return fd;
 }
 
+/*
+** ArrayExt *sysInfo
+** arr2[0] = char *currentDbFilePath
+** arr2[1] = FileInfo *fileDescription
+** arr2[2] = char *currentIndexDir
+** arr2[3] = DataInfo *ridIndex
+** arr2[4] = char *argu2
+**
+** arr[0] = int currentDbFile
+*/
+void loadDbInfo(void *sysInfo)
+{
+    strcpy((char*) ((ArrayExt*) sysInfo)->arr2[0], "./dbs/");
+    strcat((char*) ((ArrayExt*) sysInfo)->arr2[0], (char*) ((ArrayExt*) sysInfo)->arr2[4]);
+
+    strcpy((char*) ((ArrayExt*) sysInfo)->arr2[2], (char*) ((ArrayExt*) sysInfo)->arr2[0]);
+    strcat((char*) ((ArrayExt*) sysInfo)->arr2[2], "/index");
+
+    ((ArrayExt*) sysInfo)->arr2[1] = getFileInfo(((int*) ((ArrayExt*) sysInfo)->arr)[0]);
+
+    //load ridIndex
+    ((ArrayExt*) sysInfo)->arr2[3] = readRidIndex(((FileInfo*) ((ArrayExt*) sysInfo)->arr2[1])->amountOfData, (char*) ((ArrayExt*) sysInfo)->arr2[2]);
+}
 
 int main(int argc, char *argv[])
 {
@@ -485,6 +661,7 @@ int main(int argc, char *argv[])
     char currentIndex[MAX_FILENAME] = {0};
     Index *index = NULL;
     DataInfo *ridIndex = NULL;
+    bool ridIndexDirty = false;
 
     clock_t start, end;
     time_t t1, t2;
@@ -504,6 +681,14 @@ int main(int argc, char *argv[])
 
         if(strcmp(argu, "exit") == 0)
         {
+            ArrayExt old;
+            old.arr2 = malloc(3 * sizeof(void*));
+
+            old.arr2[0] = fileDescription;
+            old.arr2[1] = ridIndex;
+            old.arr2[2] = currentIndexDir;
+            closeDb(&old);
+
             break;
         }
         else if(strcmp(argu, "list") == 0)
@@ -512,60 +697,105 @@ int main(int argc, char *argv[])
         }
         else if(strcmp(argu, "use") == 0)
         {
-            fileSelected = true;
+            if(fileSelected && ridIndexDirty)
+            {
+                /*
+                ** ArrayExt *sysInfo
+                ** arr2[0] = FileInfo *fileDescription
+                ** arr2[1] = DataInfo *ridIndex
+                ** arr2[2] = char *indexDirPath
+                */
+                ArrayExt old;
+                old.arr2 = malloc(3 * sizeof(void*));
+
+                old.arr2[0] = fileDescription;
+                old.arr2[1] = ridIndex;
+                old.arr2[2] = currentIndexDir;
+                closeDb(&old);
+            }
 
             if((currentDbFile = useDB(argu2)))
             {
-                strcpy(currentDbFilePath, "./dbs/");
-                strcat(currentDbFilePath, argu2);
-                fileDescription = getFileInfo(currentDbFile);
+                /*
+                ** ArrayExt *dbInfo
+                ** arr2[0] = char *currentDbFilePath
+                ** arr2[1] = FileInfo *fileDescription
+                ** arr2[2] = char *currentIndexDir
+                ** arr2[3] = DataInfo *ridIndex
+                ** arr2[4] = char *argu2
+                **
+                ** arr[0] = int currentDbFile
+                */
+                ArrayExt dbInfo;
+                dbInfo.arr = malloc(sizeof(int));
+                dbInfo.arr2 = malloc(5 * sizeof(void*));
 
-                strcpy(currentIndexDir, currentDbFilePath);
-                strcat(currentIndexDir, "/index");
+                ((int*) dbInfo.arr)[0] = currentDbFile;
+                dbInfo.arr2[0] = currentDbFilePath;
+                dbInfo.arr2[1] = fileDescription;
+                dbInfo.arr2[2] = currentIndexDir;
+                dbInfo.arr2[3] = ridIndex;
+                dbInfo.arr2[4] = argu2;
 
-                start = clock();
-                t1 = getTime();
-
-                ridIndex = readRidIndex(fileDescription->amountOfData, currentIndexDir);
-                if(ridIndex != NULL)
-                {
-                    ridIndex = makeRidIndex(ridIndex, fileDescription->amountOfData);
-                }
-                end = clock();
-                t2 = getTime();
-                printf("Time: %lfsec\t%ldsec\n", timeSpend(start, end), timeSpend2(t1, t2));
-
+                loadDbInfo(&dbInfo);
+                fileDescription = dbInfo.arr2[1];
+                ridIndex = dbInfo.arr2[3];
 
                 printf("Switch to %s.\n", argu2);
             }
+
+            ridIndexDirty = false;
+            fileSelected = true;
         }
         else if(strcmp(argu, "put") == 0)
         {
             if(fileSelected)
             {
-                //put
+                //put with stdin
                 start = clock();
                 t1 = getTime();
+
                 /*
-                Block inputBuffer;
-                blockInit(&inputBuffer, fileDescription);
-
-                memcpy(inputBuffer.data, argu2, MAX_DATA_SIZE);
-                lseek(currentDbFile, 0, SEEK_END);
-                write(currentDbFile, &inputBuffer, sizeof(Block));
+                ** sysInfo
+                ** arr[0] = int currentDbFile
+                ** arr2[0] = FileInfo *fileDescription
+                ** arr2[1] = DataInfo *ridIndex
                 */
+                ArrayExt sysInfo;
+                sysInfo.arr = malloc(1 * sizeof(int));
+                sysInfo.arr2 = malloc(2 * sizeof(void*));
 
+                ((int*) sysInfo.arr)[0] = currentDbFile;
+                sysInfo.arr2[0] = fileDescription;
+                sysInfo.arr2[1] = ridIndex;
+
+                putByIn(&sysInfo, argu2);
+                ridIndex = sysInfo.arr2[1];
+
+                t2 = getTime();
+                end = clock();
+                printf("Time: %lfsec\t%ldsec\n", timeSpend(start, end), timeSpend2(t1, t2));
+
+                ridIndexDirty = true;
+            }
+        }
+        else if(strcmp(argu, "fput") == 0)
+        {
+            if(fileSelected)
+            {
                 //put by file
+                start = clock();
+                t1 = getTime();
+
                 FILE *f = fopen(argu2, "r");
                 printf("Records: %d\t", putByFile(f, currentDbFile, fileDescription, ridIndex, currentIndexDir));
                 fclose(f);
 
                 //read ridIndex
                 ridIndex = readRidIndex(fileDescription->amountOfData, currentIndexDir);
-                if(ridIndex != NULL)
-                {
-                    ridIndex = makeRidIndex(ridIndex, fileDescription->amountOfData);
-                }
+
+                //rid dirty bit
+                ridIndexDirty = true;
 
                 t2 = getTime();
                 end = clock();
@@ -590,12 +820,6 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
-                    /*
-                    char **temp = splitKeyValue(argu2);
-                    char *key = temp[0];
-                    char *value = temp[1];
-                    free(temp);
-                    */
                     ArrayExt *keyValue = (ArrayExt*) splitKeyValue(argu2);
                     char *key = (char*) keyValue->arr2[0];
                     char *value = (char*) keyValue->arr2[1];
@@ -647,7 +871,6 @@ int main(int argc, char *argv[])
                 }
                 /*
                 **
-                */
                 else if(strcmp(argu2, "1%") == 0)
                 {
                     int total = fileDescription->amountOfData;
@@ -687,7 +910,6 @@ int main(int argc, char *argv[])
                     free(random);
                     printf("Delete: %d\t", total / 10);
                 }
-                /*
                 **
                 */
                 else

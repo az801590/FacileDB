@@ -52,6 +52,11 @@ DataInfo *bstTraversal(DataInfo *node, int key)
     }
 }
 
+/*
+** ArrayExt *indexArr
+** arr = DataInfo index[]
+** len = arr.length
+*/
 void saveRidIndex(void *indexArr, char *dirPath)
 {
     char finalFilename[MAX_FILENAME] = {0};
@@ -97,7 +102,7 @@ DataInfo *readRidIndex(int amountOfData, const char *currentIndexDir)
 
     if(fd == -1)
     {
-        fprintf(stderr, "%d %s(rid index file)\n", errno, strerror(errno));
+        //fprintf(stderr, "%d %s(rid index file)\n", errno, strerror(errno));
 
         return NULL;
     }
@@ -112,5 +117,12 @@ DataInfo *readRidIndex(int amountOfData, const char *currentIndexDir)
 
     close(fd);
 
-    return indexArr;
+    if(indexArr != NULL)
+    {
+        return makeRidIndex(indexArr, amountOfData);
+    }
+    else
+    {
+        return indexArr;
+    }
 }

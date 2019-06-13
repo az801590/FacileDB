@@ -9,13 +9,13 @@
 
 #define INPUT_BUFFER 128
 #define MAX_PAIR_NUM 15
-/*
+
 struct CPArray
 {
     char **arr;
     int len;
 };
-
+/*
 struct CPArray *splitKeyValue(char *str)
 {
     int count = 0;
@@ -43,52 +43,8 @@ struct CPArray *splitKeyValue(char *str)
     current->len = count / 2;
     return current;
 }
-
+*/
 int main()
 {
-    char buff[1024] = {0};
-    while(fgets(buff, 1024, stdin)!=NULL)
-    {
-        buff[strlen(buff) - 1] = '\0';
-
-        struct CPArray *current = NULL;
-        current = splitKeyValue(buff);
-
-        for(int i = 0;i<(current->len);i++)
-        printf("%s\n%s\n", current->arr[2*i], current->arr[2*i+1]);
-
-    }
-}
-*/
-
-void saveRidIndex(DataInfo *indexArr, int count, char *dirPath)
-{
-    char finalFilename[MAX_FILENAME] = {0};
-    strcpy(finalFilename, dirPath);
-    strcat(finalFilename, "/rid/0");
-
-    int fd = open(finalFilename, O_RDWR | O_CREAT, 0666);
-
-    if(fd != -1)
-    {
-        for(int i = 0; i < count; i ++)
-        {        
-            if(!write(fd, &indexArr[i].rid, sizeof(((DataInfo*)0)->rid)))
-            {
-                printf("Write error\n");
-            }
-            else
-            {
-                if(!write(fd, &indexArr[i].offset, sizeof(((DataInfo*)0)->offset)))
-                {
-                    printf("Write error\n");
-                }
-            }
-        }
-        close(fd);
-    }
-    else
-    {
-        fprintf(stderr, "%d: %s(rid index file)\n", errno, strerror(errno));
-    }
+    printf("%d\t%d\n", sizeof(struct CPArray*), sizeof(char*));
 }
