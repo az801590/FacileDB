@@ -1,0 +1,6 @@
+dbs
+Facile
+*.o
+
+src/ideas.c
+backup

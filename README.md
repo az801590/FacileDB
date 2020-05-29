@@ -1,58 +1,45 @@
-# myDB
+# FacileDB
+A simple and lightweight database implementation.
 
-## Select databases
-List all db files
-```
-list
-```
+## Install
+1. Make sure gcc and make has been installed.
+2. Clone source code to any directory you want.
+3. Execute "install.sh"
 
-Select or create a db file
-```
-use <dbFileName>
-```
+## StartUp
+Execute "Facile" in the folder.
 
-## INSERT
-### Insert with file
-file format
-```
-@url:http://www.gogle.com
-@count:123
-@
-@url:http://www.yahoo.com
-@count:234
-@
-```
+### Commands
+#### Normal commands
+Command | description |
+:-------|:------------|
+list    | Show all exsited databases. |
+show    | Show all exsited sets in current database. |
+exit    | Exit FacileDb.
 
-command
+#### Select Databases
 ```
-put <fileName>
+use dbName
 ```
 
-## Index
-### make index
-Sequence index.
+#### INSERT
 ```
-index <column>
+setName.put "key1":"value1","key2":"value2"
 ```
 
-
-## Find
-### Find all data
+#### FIND
 ```
-find *
-```
-### Find with certain key-value
-```
-find key:value
+setName.find "key":"value"
 ```
 
+#### DELETE
+```
+setName.delete "key":"value"
+```
 
-## Delete
-### Delete all
+#### INDEX
+Index field would speed up executations than non-index field.
+Index can be make before or after the data insert.
 ```
-delete *
-```
-### Delete with certain key-value
-```
-delete key:value
+setName.makeIndex "key"
 ```
