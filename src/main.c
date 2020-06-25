@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <time.h>
 #include <sys/types.h>
-#include <ctype.h>
 
 #include "util.h"
 #include "index.h"
@@ -18,38 +17,13 @@ extern int listAllDirs(void *, void *);
 extern void closeDb();
 extern int useDb(void *);
 extern int putData(void *, void *);
-extern void *findData(void *, void *);
-extern void *getRecords(void *);
+extern int findData(void *, void *, void *);
+extern void getRecords(void *, void *);
 extern int deleteData(off_t);
 extern int makeIndex(void *, void *);
+extern void *strTrim(void *);
 
 extern DbInfo dbInfo;
-
-/*
-** reference: (https://stackoverflow.com/questions/122616/how-do-i-trim-leading-trailing-whitespace-in-a-standard-way)
-*/
-void *strTrim(void *input)
-{
-    char *str = input;
-    while (isspace(*str))
-    {
-        str++;
-    }
-
-    // all space = false
-    if (*str != 0)
-    {
-        char *end = str + strlen(str) - 1;
-        while (end > str && isspace(*end))
-        {
-            end--;
-        }
-
-        *(end + 1) = '\0';
-    }
-
-    return str;
-}
 
 int main()
 {
@@ -101,11 +75,11 @@ int main()
                         {
                             if (output == 0)
                             {
-                                printf("Syntax error!\n");
+                                fprintf(stderr, "Syntax error!\n");
                             }
                             else if (output == -1)
                             {
-                                printf("Write err\n");
+                                fprintf(stderr, "Write err\n");
                             }
                         }
                     }
@@ -119,30 +93,31 @@ int main()
                     if (dbInfo.properties)
                     {
                         //select && delete
-                        ArrayExt *result = findData(argu1, argu3);
-                        if (result)
+                        ArrayExt result = {.arr1 = NULL, .arr2 = NULL, .len = 0};
+                        if (findData(&result, argu1, argu3) >= 0)
                         {
-                            if (result->len != 0)
-                            {
-                                BlockList *head = result->arr1;
-                                BlockList *current = head;
+                            printf("Total: %d\n", result.len);
+                            printf("--------------\n");
 
-                                printf("Total: %d\n", result->len);
-                                printf("--------------\n");
+                            if (result.len != 0)
+                            {
+                                BlockList *head = result.arr1;
+                                BlockList *current = head;
+                                ArrayExt records = {.arr1 = NULL, .arr2 = NULL, .len = 0};
 
                                 if (strcmp(argu2, "find") == 0)
                                 {
                                     while (current)
                                     {
-                                        ArrayExt *records = getRecords(&(current->block));
-
-                                        for (int i = 0; i < records->len; i++)
+                                        getRecords(&records, current->block.data);
+                                        for (int i = 0; i < records.len; i++)
                                         {
-                                            printf("%s:\t%s\n", (char *)(records->arr2[2 * i]), (char *)(records->arr2[2 * i + 1]));
+                                            printf("%s:\t%s\n", (char *)(records.arr2[2 * i]), (char *)(records.arr2[2 * i + 1]));
                                         }
                                         printf("-----------\n");
 
                                         current = current->next;
+                                        free(records.arr2);
                                     }
                                 }
                                 else if (strcmp(argu2, "delete") == 0)
@@ -165,14 +140,10 @@ int main()
                                     free(current);
                                 }
                             }
-                            else
-                            {
-                                printf("Not Found!\n");
-                            }
                         }
                         else
                         {
-                            printf("Syntax error!\n");
+                            fprintf(stderr, "Query syntax error!\n");
                         }
                     }
                     else
@@ -210,7 +181,6 @@ int main()
                     {
                         printf("Choose a db first.\n\n");
                     }
-                    
                 }
                 else
                 {
@@ -291,7 +261,7 @@ int main()
             }
         }
 
-        printf("> ");
+        printf("\n> ");
     }
 
     return 0;

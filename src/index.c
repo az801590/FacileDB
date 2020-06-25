@@ -25,10 +25,11 @@ void *loadNode(const int);
 int makeIndex(void *, void *);
 void insertIndex(void *);
 void insertIntoNode(void *, void *, int, const int);
-void *indexSearch(const int, void *);
+int indexSearch(void *, const int, void *);
+int indexSearch2(void *, const int, void *);
 
 extern DbInfo dbInfo;
-extern void *getRecords(void *);
+extern void getRecords(void *, void *);
 extern int setExist(void *);
 extern int setInit(void *);
 
@@ -273,6 +274,7 @@ int makeIndex(void *setName, void *str)
                     int readSize = 0;
                     int counter = 0;
                     Index new;
+                    ArrayExt records = {.arr1 = NULL, .arr2 = NULL, .len = 0};
 
                     lseek(dbInfo.setInfo.file, 0, SEEK_SET);
                     while ((readSize = read(dbInfo.setInfo.file, &buffer, TMPSIZE * sizeof(Block))) > 0)
@@ -281,21 +283,22 @@ int makeIndex(void *setName, void *str)
                         {
                             if (!(buffer[i].delete))
                             {
-                                ArrayExt *records = getRecords(&buffer[i]);
-                                for (int j = 0; j < records->len; j++)
+                                getRecords(&records, buffer[i].data);
+                                for (int j = 0; j < records.len; j++)
                                 {
                                     //seq search;to imporve, use binary search
-                                    if (strncmp(indexName, records->arr2[2 * j], DATA_SIZE) == 0)
+                                    if (strncmp(indexName, records.arr2[2 * j], DATA_SIZE) == 0)
                                     {
                                         new.offset = (lseek(dbInfo.setInfo.file, 0, SEEK_CUR) - readSize + i * sizeof(Block));
                                         new.rid = buffer[i].rid;
-                                        strncpy(new.data, records->arr2[2 * j + 1], INDEX_LEN);
+                                        strncpy(new.data, records.arr2[2 * j + 1], INDEX_LEN);
 
                                         insertIndex(&new);
                                         counter++;
                                         break;
                                     }
                                 }
+                                free(records.arr2);
                             }
                         }
                     }
@@ -424,8 +427,9 @@ void insertIntoNode(void *node, void *index, int num, const int newChildTag)
 }
 
 // method(inside the node): linear search
-void *indexSearch(const int tag, void *str)
+int indexSearch(void *array, const int tag, void *str)
 {
+    ArrayExt *result = array;
     Node *n = loadNode(tag);
 
     int i = 0, count = 0;
@@ -444,42 +448,79 @@ void *indexSearch(const int tag, void *str)
 
     if (count > 0)
     {
-        ArrayExt *result = NULL;
-        Index *eptr = NULL;
-
         //search nextNode
         if (n->nextTag != -1 && i == (n->length))
         {
-            result = indexSearch(n->nextTag, str);
+            indexSearch(result, n->nextTag, str);
         }
 
-        if (result)
+        if (result->arr1)
         {
-            eptr = calloc(count + (result->len), sizeof(Index));
-            memcpy(eptr, result->arr1, (result->len) * sizeof(Index));
-            free(result->arr1);
+            void *tmp = realloc(result->arr1, (count + (result->len)) * sizeof(Index));
+            if (tmp)
+            {
+                result->arr1 = tmp;
+            }
+            else
+            {
+                //error
+            }
         }
         else
         {
-            eptr = calloc(count, sizeof(Index));
-            result = calloc(1, sizeof(ArrayExt));
+            result->arr1 = calloc(count, sizeof(Index));
         }
 
-        memcpy(&(eptr[result->len]), &(n->element[i - count]), count * sizeof(Index));
-
-        result->arr1 = eptr;
+        memcpy(&(((Index *)result->arr1)[result->len]), &(n->element[i - count]), count * sizeof(Index));
         result->len += count;
-
-        munmap(n, sizeof(Node));
-        return result;
     }
     else if (n->level != 0)
     {
         int child = n->childTag[i];
         munmap(n, sizeof(Node));
-        return indexSearch(child, str);
+        return indexSearch(result, child, str);
     }
 
     munmap(n, sizeof(Node));
-    return NULL;
+    return result->len;
+}
+
+/*
+** for case: (key!value) and (key=*)
+*/
+int indexSearch2(void *result, const int tag, void *value)
+{
+    Node *n = loadNode(tag);
+    if (n->level != 0)
+    {
+        indexSearch2(result, n->childTag[0], value);
+    }
+    else
+    {
+        ArrayExt *array = result;
+        if (value && cmpData(value, n->element[0].data) >= 0 && cmpData(value, n->element[n->length - 1].data) <= 0)
+        {
+            //linear search
+            for (int i = 0; i < n->length; i++)
+            {
+                if (cmpData(value, n->element[i].data) != 0)
+                {
+                    memcpy(&(((Index *)array->arr1)[array->len]), &(n->element[i]), sizeof(Index));
+                    array->len++;
+                }
+            }
+        }
+        else
+        {
+            memcpy(&(((Index *)array->arr1)[array->len]), n->element, n->length * sizeof(Index));
+            array->len += n->length;
+        }
+
+        if (n->nextTag != -1)
+        {
+            indexSearch2(result, n->nextTag, value);
+        }
+    }
+    munmap(n, sizeof(Node));
+    return ((ArrayExt *)result)->len;
 }

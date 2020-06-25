@@ -1,3 +1,4 @@
+
 #define DATA_SIZE 1024
 #define TMPSIZE 5 //use in seqSearch
 #define MAX_FILENAME 256 //linux definition: 255bytes
@@ -11,7 +12,6 @@ struct BLOCK
     char data[DATA_SIZE];
     off_t nextOffset;
     time_t createdTime;
-    uint64_t recordNum;
     int64_t delete;
 
     int64_t padding;

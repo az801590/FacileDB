@@ -9,6 +9,13 @@ A simple and lightweight database implementation.
 ## StartUp
 Execute "Facile" in the folder.
 
+## Storage Entities
+### Database
+### Set
+### Data
+### Record
+A pair of key and value.
+
 ### Commands
 #### Normal commands
 Command | description |
@@ -22,14 +29,28 @@ exit    | Exit FacileDb.
 use dbName
 ```
 
-#### INSERT
+#### PUT
 ```
 setName.put "key1":"value1","key2":"value2"
 ```
 
 #### FIND
 ```
-setName.find "key":"value"
+//Everything in the set.
+setName.find *=*
+
+//key is equal to value.
+setName.find "key"="value"
+
+//key is not equal to value.
+setName.find "key"!"value"
+
+//All values belongs to certain key.
+setName.find "key"=*
+
+//All keys belongs to certain value.
+setName.find *="value"
+
 ```
 
 #### DELETE

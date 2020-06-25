@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
@@ -10,6 +9,8 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <stdint.h>
+#include <regex.h>
+#include <ctype.h>
 
 #include "util.h"
 #include "index.h"
@@ -24,13 +25,14 @@ int loadDbProperties(void *);
 
 void closeDb();
 
-void *splitKeyValue(void *);
+int splitKeyValue(void *, void *);
 int putData(void *, void *);
-void putFormat(void *, void *);
+int putFormat(void *, void *);
 
-void *seqSearch(void *);
-void *findData(void *, void *);
-void *getRecords(void *);
+int seqSearch(void *, void *);
+int findData(void *, void *, void *);
+int cmpByOffset(const void *, const void *);
+void getRecords(void *, void *);
 
 int deleteData(off_t);
 
@@ -39,14 +41,44 @@ int setInit(void *);
 int loadSetProperties(void *);
 void closeSet();
 
+int queryDecode(void *, void *);
+
 extern int indexExist(void *);
 extern void indexInit(void *);
 extern void closeIndex();
 extern void insertIndex(void *);
 extern int makeIndex(void *, void *);
-extern void *indexSearch(const int, void *);
+extern int indexSearch(void *, const int, void *);
+extern int indexSearch2(void *, const int, void *);
 
 DbInfo dbInfo = {.setInfo = {.file = -1}, .path = {0}, .properties = NULL};
+
+/*
+** reference: (https://stackoverflow.com/questions/122616/how-do-i-trim-leading-trailing-whitespace-in-a-standard-way)
+*/
+void *strTrim(void *input)
+{
+    char *str = input;
+    while (isspace(*str))
+    {
+        *str = 0;
+        str++;
+    }
+
+    // all space = false
+    if (*str != 0)
+    {
+        char *end = str + strlen(str) - 1;
+        while (end > str && isspace(*end))
+        {
+            end--;
+        }
+
+        *(end + 1) = '\0';
+    }
+
+    return str;
+}
 
 //Check directory ./dbs existed , if not, create one.
 void init()
@@ -232,97 +264,129 @@ int loadDbProperties(void *dbName)
     return 1;
 }
 
-void *splitKeyValue(void *str)
+int splitKeyValue(void *arrExt, void *str)
 {
-    if (*(char *)str)
+    /*
+    ** regular expression(without space detection): ^("[^"\\]*(\\.[^"\\]*)*":"[^"\\]*(\\.[^"\\]*)*",)*("[^"\\]*(\\.[^"\\]*)*":"[^"\\]*(\\.[^"\\]*)*")$
+    ** PCRE(without space detection): ^("[^"\\]+(?:\\.[^"\\]*)*":"[^"\\]*(?:\\.[^"\\]*)*",)*("[^"\\]+(?:\\.[^"\\]*)*":"[^"\\]*(?:\\.[^"\\]*)*")$
+    ** regular expression(with space detection): ^\s*("[^"\\]*(\\.[^"\\]*)*"\s*:\s*"[^"\\]*(\\.[^"\\]*)*"\s*,\s*)*("[^"\\]*(\\.[^"\\]*)*"\s*:\s*"[^"\\]*(\\.[^"\\]*)*")\s*$
+    ** reference: (https://stackoverflow.com/questions/6525556/regular-expression-to-match-escaped-characters-quotes)
+    */
+    ArrayExt *array = arrExt;
+    int arrPair = 2;
+    array->arr2 = calloc(arrPair * 2, sizeof(char *));
+    array->len = 0;
+
+    regex_t regex;
+    regmatch_t match;
+    char pattern[] = "^\\s*(\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\"\\s*:\\s*\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\"\\s*,\\s*)*(\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\"\\s*:\\s*\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\")\\s*$";
+    if (regcomp(&regex, pattern, REG_EXTENDED) != 0)
     {
-        char *p = str;
-        int count = 1;
-        while ((p = strstr(p, "\",")))
-        {
+        //regerror
+    }
 
-            p++;
-            count++;
-        }
-
-        ArrayExt *array = calloc(1, sizeof(ArrayExt));
-        array->arr2 = calloc(count * 2, sizeof(char *));
-
-        for (int i = 0; i < count; i++)
-        {
-            char *start, *end;
-            if ((p = strstr(str, "\",")))
-            {
-                p++;
-                *p = 0;
-            }
-
-            //key
-            if (!((start = strchr(str, '"')) && (end = strstr(start, "\":"))))
-            {
-                free(array->arr2);
-                free(array);
-                return NULL;
-            }
-            start++;
-            *end = 0;
-            if (!(*start))
-            {
-                free(array->arr2);
-                free(array);
-                return NULL;
-            }
-            array->arr2[2 * i] = start;
-            str = end + 1;
-
-            //value
-            //strrchr: strchr from end of string
-            if (!((start = strchr(str, '"')) && (end = strrchr(start, '"')) && (end > start)))
-            {
-                free(array->arr2);
-                free(array);
-                return NULL;
-            }
-            start++;
-            *end = 0;
-            array->arr2[2 * i + 1] = start;
-
-            if (p)
-            {
-                str = p + 1;
-            }
-        }
-
-        array->len = count;
-        return array;
+    if (regexec(&regex, str, 1, &match, 0) == REG_NOMATCH)
+    {
+        /*
+        ** syntax error
+        ** function : regerror(...), for error information.
+        */
+        regfree(&regex);
+        free(array->arr2);
+        return 0;
     }
     else
     {
-        return NULL;
+        regfree(&regex);
+        strcpy(pattern, "\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\"");
+
+        if (regcomp(&regex, pattern, REG_EXTENDED) != 0)
+        {
+            //regerror
+        }
+
+        char *key, *value;
+        char *p = str;
+        while (*p)
+        {
+            if (regexec(&regex, p, 1, &match, 0) == REG_NOMATCH)
+            {
+                break;
+            }
+            key = p + match.rm_so + 1;
+            *(p + match.rm_eo - 1) = 0;
+            p += match.rm_eo;
+
+            if (regexec(&regex, p, 1, &match, 0) == REG_NOMATCH)
+            {
+                break;
+            }
+            value = p + match.rm_so + 1;
+            *(p + match.rm_eo - 1) = 0;
+            p += match.rm_eo;
+
+            if (strlen(key) == 0)
+            {
+                free(array->arr2);
+                array->len = 0;
+                regfree(&regex);
+                return 0;
+            }
+
+            if ((array->len) >= arrPair)
+            {
+                arrPair *= 2;
+                void *tmp = realloc(array->arr2, 2 * arrPair * sizeof(char *));
+                if (tmp)
+                {
+                    array->arr2 = tmp;
+                }
+                else
+                {
+                    //error
+                }
+            }
+            array->arr2[2 * (array->len)] = key;
+            array->arr2[2 * (array->len) + 1] = value;
+            array->len++;
+        }
     }
+    regfree(&regex);
+    return 1;
 }
 
 /*
 ** Size of data: DATA_SIZE
 ** Format: key1 0 value1 0 0 key2 0 value2 0 0...
+** safety problem: out of bound
 */
-//safety problem: out of bounded
-void putFormat(void *data, void *array)
+int putFormat(void *data, void *array)
 {
     char *p = data;
+    int length = DATA_SIZE;
 
+    int i = 0;
     for (int i = 0; i < ((ArrayExt *)array)->len; i++)
     {
-        char *key = ((ArrayExt *)array)->arr2[2 * i];
-        char *value = ((ArrayExt *)array)->arr2[2 * i + 1];
+        void *key = ((ArrayExt *)array)->arr2[2 * i];
+        void *value = ((ArrayExt *)array)->arr2[2 * i + 1];
 
-        strncat(p, key, DATA_SIZE);
-        p += strlen(key) + 1;
-        strncat(p, value, DATA_SIZE);
-        p += strlen(value) + 2;
+        if ((length -= (strlen(key) + strlen(value) + 3)) >= 0)
+        {
+            strncat(p, key, length);
+            p += strlen(key) + 1;
+
+            strncat(p, value, DATA_SIZE);
+            p += strlen(value) + 2;
+        }
+        else
+        {
+            break;
+        }
     }
 
     ((char *)data)[DATA_SIZE / sizeof(char) - 1] = 0;
+    return i;
 }
 
 /*
@@ -335,8 +399,8 @@ int putData(void *setName, void *str)
     if (setInit(setName))
     {
 
-        ArrayExt *obj;
-        if (!(obj = splitKeyValue(str)))
+        ArrayExt obj = {.arr1 = NULL, .arr2 = NULL, .len = 0};
+        if (!(splitKeyValue(&obj, str)))
         {
             return 0;
         }
@@ -346,9 +410,12 @@ int putData(void *setName, void *str)
                 .rid = dbInfo.setInfo.properties->amountOfData,
                 .nextOffset = 0,
                 .createdTime = getTime(),
-                .recordNum = obj->len,
                 .delete = 0};
-            putFormat(new.data, obj);
+
+            if (putFormat(new.data, &obj) != obj.len)
+            {
+                //out of bound
+            }
 
             dbInfo.setInfo.properties->amountOfData++;
             dbInfo.setInfo.properties->modifiedTime = new.createdTime;
@@ -361,24 +428,22 @@ int putData(void *setName, void *str)
             }
             else
             {
-                for (int i = 0; i < obj->len; i++)
+                for (int i = 0; i < obj.len; i++)
                 {
-                    if (indexExist(obj->arr2[2 * i]))
+                    if (indexExist(obj.arr2[2 * i]))
                     {
-                        indexInit(obj->arr2[2 * i]);
+                        indexInit(obj.arr2[2 * i]);
                         Index newIndex = {
                             .rid = new.rid,
                             .offset = (lseek(dbInfo.setInfo.file, 0, SEEK_CUR) - sizeof(Block))};
-                        strncpy(newIndex.data, obj->arr2[2 * i + 1], INDEX_LEN);
+                        strncpy(newIndex.data, obj.arr2[2 * i + 1], INDEX_LEN);
 
                         insertIndex(&newIndex);
                     }
                 }
             }
 
-            free(((ArrayExt *)obj)->arr2);
-            free((ArrayExt *)obj);
-
+            free(obj.arr2);
             return 1;
         }
     }
@@ -388,101 +453,175 @@ int putData(void *setName, void *str)
     }
 }
 
-void *findData(void *setName, void *str)
+int findData(void *result, void *setName, void *str)
 {
-    ArrayExt *result = calloc(1, sizeof(ArrayExt));
     if (setExist(setName) && setInit(setName))
     {
-        ArrayExt *obj;
-        if (!(obj = splitKeyValue(str)))
+        ArrayExt obj = {.arr1 = NULL, .arr2 = NULL, .len = 0};
+
+        if (!queryDecode(&obj, str))
         {
-            free(result);
-            return NULL;
+            free(obj.arr1);
+            free(obj.arr2);
+            return -2;
         }
 
-        if (indexExist(obj->arr2[0]))
+        //case: key!* using seqSearch
+        if (*((char *)obj.arr2[0]) == '"' && !(((char *)obj.arr1)[0] == '!' && *((char *)obj.arr2[1]) == '*') && indexExist(&((char *)obj.arr2[0])[1]))
         {
-            indexInit(obj->arr2[0]);
-            ArrayExt *found = indexSearch(dbInfo.setInfo.indexInfo.properties->root, obj->arr2[1]);
+            indexInit(&((char *)obj.arr2[0])[1]);
+            ArrayExt found = {.arr1 = NULL, .arr2 = NULL, .len = 0};
 
-            if (found != NULL)
+            if (((char *)obj.arr1)[0] == '=' && *((char *)obj.arr2[1]) == '"')
             {
-                Index *indexArr = found->arr1;
-                for (int i = 0; i < (found->len); i++)
+                //case: key=value
+                indexSearch(&found, dbInfo.setInfo.indexInfo.properties->root, &((char *)obj.arr2[1])[1]);
+            }
+            else
+            {
+                int num = dbInfo.setInfo.indexInfo.properties->tags * (ORDER - 1) + 1;
+                found.arr1 = calloc(num, sizeof(Index));
+                if (((char *)obj.arr1)[0] == '=' && *((char *)obj.arr2[1]) == '*')
                 {
-                    off_t displacement = (indexArr[i].offset) - lseek(dbInfo.setInfo.file, 0, SEEK_CUR);
-                    lseek(dbInfo.setInfo.file, displacement, SEEK_CUR);
+                    //case: key=*
+                    indexSearch2(&found, dbInfo.setInfo.indexInfo.properties->root, NULL);
+                }
+                else
+                {
+                    //case: key!value
+                    indexSearch2(&found, dbInfo.setInfo.indexInfo.properties->root, &((char *)obj.arr2[1])[1]);
+                }
+            }
 
-                    BlockList *tmp = calloc(1, sizeof(BlockList));
-                    if (read(dbInfo.setInfo.file, &tmp->block, sizeof(Block)) > 0)
+            Index *indexArr = found.arr1;
+            //sort indexArr by offset
+            qsort(indexArr, found.len, sizeof(Index), cmpByOffset);
+            off_t displacement = 0;
+            int readSize = 0;
+            for (int i = 0; i < (found.len); i++)
+            {
+                displacement = (indexArr[i].offset) - lseek(dbInfo.setInfo.file, 0, SEEK_CUR);
+                lseek(dbInfo.setInfo.file, displacement, SEEK_CUR);
+
+                BlockList *tmp = calloc(1, sizeof(BlockList));
+                if ((readSize = read(dbInfo.setInfo.file, &tmp->block, sizeof(Block))) > 0)
+                {
+                    if (!tmp->block.delete)
                     {
-                        if (!tmp->block.delete)
-                        {
-                            tmp->offset = indexArr[i].offset;
-                            tmp->next = result->arr1;
-                            result->arr1 = tmp;
-                            result->len++;
-                        }
-                        else
-                        {
-                            free(tmp);
-                        }
+                        tmp->offset = indexArr[i].offset;
+                        tmp->next = ((ArrayExt *)result)->arr1;
+                        ((ArrayExt *)result)->arr1 = tmp;
+                        ((ArrayExt *)result)->len++;
                     }
                     else
                     {
-                        perror("findData/indexSearch");
+                        free(tmp);
                     }
                 }
+                else if (readSize == -1)
+                {
+                    //read error
+                    perror("findData/indexSearch");
+                    break;
+                }
+            }
+
+            if (found.arr1)
+            {
+                free(found.arr1);
             }
         }
         else
         {
             lseek(dbInfo.setInfo.file, 0, SEEK_SET);
-            return seqSearch(obj);
+            seqSearch(result, &obj);
         }
+
+        free(obj.arr1);
+        free(obj.arr2);
+        return ((ArrayExt *)result)->len;
     }
     else
     {
-        result->len = 0;
+        //load set error or set isn't existed
+        return -1;
     }
-    return result;
+}
+
+int cmpByOffset(const void *a, const void *b)
+{
+    const Index *aa = a, *bb = b;
+    return (aa->offset - bb->offset);
 }
 
 /*
 ** Get every key-value pair from file with format "key 0 value 0 0..."
+** Safty problem
 */
-void *getRecords(void *block)
+void getRecords(void *arrExt, void *data)
 {
-    Block *b = (Block *)block;
-    char *p = b->data;
-    char *end = p + (DATA_SIZE - 1) / sizeof(char);
+    ArrayExt *records = arrExt;
+    char *p = data;
+    char *dataEnd = p + DATA_SIZE;
 
-    ArrayExt *records = calloc(1, sizeof(ArrayExt));
-    records->arr2 = calloc(2 * (b->recordNum), sizeof(char *));
-    records->len = b->recordNum;
+    records->len = 0;
+    int arrPair = 8;
+    records->arr2 = calloc(2 * arrPair, sizeof(char *));
 
-    for (int i = 0; (i < (int)(b->recordNum)) && (p <= end) && (*p); i++)
+    while ((p < dataEnd) && (*p))
     {
-        records->arr2[2 * i] = p;
-        p += strlen(p) + 1;
+        char *key = p;
+        p += strlen(key) + 1;
+        char *value = p;
+        p += strlen(value) + 2;
 
-        records->arr2[2 * i + 1] = p;
-        p += strlen(p) + 2;
+        if (!((p - 1) < dataEnd))
+        {
+            break;
+        }
+
+        if (records->len >= arrPair)
+        {
+            arrPair *= 2;
+            void *tmp = realloc(records->arr2, 2 * arrPair * sizeof(char *));
+
+            if (tmp)
+            {
+                records->arr2 = tmp;
+            }
+            else
+            {
+                //no memory to allocate
+                break;
+            }
+        }
+
+        records->arr2[2 * (records->len)] = key;
+        records->arr2[2 * (records->len) + 1] = value;
+        records->len++;
     }
-
-    return records;
 }
 
 /*
 ** current version only support single key-value pair target search
 ** key: target->arr2[0], value: target->arr2[1]
-** return ArrayExt pointer with arr1: BlockList, len: length
+** result: ArrayExt pointer with arr1: BlockList, len: length
 */
-void *seqSearch(void *target)
+int seqSearch(void *result, void *target)
 {
+    void **targetArr = ((ArrayExt *)target)->arr2;
+    char *eq = ((ArrayExt *)target)->arr1;
+
+    if (*((char *)targetArr[0]) == '*' && *((char *)targetArr[1]) == '*' && eq[0] == '!')
+    {
+        //Case: *!* -> null
+        return 1;
+    }
+
     Block buffer[TMPSIZE];
-    ArrayExt *result = calloc(1, sizeof(ArrayExt));
+
     int readSize = 0;
+    ArrayExt records = {.arr1 = NULL, .arr2 = NULL, .len = 0};
 
     while ((readSize = read(dbInfo.setInfo.file, &buffer, TMPSIZE * sizeof(Block))) > 0)
     {
@@ -490,29 +629,87 @@ void *seqSearch(void *target)
         {
             if (!(buffer[i].delete))
             {
-                ArrayExt *records = getRecords(&buffer[i]);
-                for (int j = 0; j < records->len; j++)
+                int found = 0;
+                if (*((char *)targetArr[0]) != '*' || *((char *)targetArr[1]) != '*')
                 {
-                    //seq search;to imporve, use binary search
-                    if (strncmp(((ArrayExt *)target)->arr2[0], records->arr2[2 * j], DATA_SIZE) == 0)
+                    getRecords(&records, buffer[i].data);
+                    for (int j = 0; j < records.len; j++)
                     {
-                        if ((strncmp(((ArrayExt *)target)->arr2[1], records->arr2[2 * j + 1], DATA_SIZE) == 0) || strncmp(((ArrayExt *)target)->arr2[1], "*", DATA_SIZE) == 0)
+                        //seq search;to imporve, use binary search
+                        if (eq[0] == '!' && (*((char *)targetArr[0]) == '*' || *((char *)targetArr[1]) == '*'))
                         {
-                            BlockList *found = calloc(1, sizeof(BlockList));
-                            memcpy(&(found->block), &buffer[i], sizeof(Block));
-                            found->offset = (lseek(dbInfo.setInfo.file, 0, SEEK_CUR) - readSize + i * sizeof(Block));
-                            found->next = result->arr1;
-                            result->arr1 = found;
-                            result->len++;
-                            break;
+                            if (*((char *)targetArr[1]) == '*')
+                            {
+                                //Case: "key"!* -> a is not existed; a is null.
+                                if (strncmp(&((char *)targetArr[0])[1], records.arr2[2 * j], DATA_SIZE) != 0)
+                                {
+                                    found = 1;
+                                }
+                                else
+                                {
+                                    found = 0;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                //case: *!"value"
+                                if (strncmp(&((char *)targetArr[1])[1], records.arr2[2 * j + 1], DATA_SIZE) == 0)
+                                {
+                                    found = 0;
+                                    break;
+                                }
+                                else
+                                {
+                                    found = 1;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (*((char *)targetArr[0]) == '*' || strncmp(&((char *)targetArr[0])[1], records.arr2[2 * j], DATA_SIZE) == 0)
+                            {
+                                if (eq[0] == '=')
+                                {
+                                    if (*((char *)targetArr[1]) == '*' || strncmp(&((char *)targetArr[1])[1], records.arr2[2 * j + 1], DATA_SIZE) == 0)
+                                    {
+                                        found = 1;
+                                        break;
+                                    }
+                                }
+                                else
+                                {
+                                    //case: "key"!"value"
+                                    if (strncmp(&((char *)targetArr[1])[1], records.arr2[2 * j + 1], DATA_SIZE) != 0)
+                                    {
+                                        found = 1;
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
+                    free(records.arr2);
+                }
+                else
+                {
+                    //Case: *=*
+                    found = 1;
+                }
+
+                if (found)
+                {
+                    BlockList *new = calloc(1, sizeof(BlockList));
+                    memcpy(&(new->block), &buffer[i], sizeof(Block));
+                    new->offset = (lseek(dbInfo.setInfo.file, 0, SEEK_CUR) - readSize + i * sizeof(Block));
+                    new->next = ((ArrayExt *)result)->arr1;
+                    ((ArrayExt *)result)->arr1 = new;
+                    ((ArrayExt *)result)->len++;
                 }
             }
         }
     }
-
-    return result;
+    return 1;
 }
 
 int deleteData(off_t offset)
@@ -676,4 +873,123 @@ void closeSet()
 
     munmap(dbInfo.setInfo.properties, sizeof(SetProperties));
     dbInfo.setInfo.properties = NULL;
+}
+
+/*
+** Decode query to ArrayExt object. For example, 
+** query: *=* & "key"!"value" (all=all and key!=value)
+** arrExt->arr2: [ *, *, "key, "value] (* : all, "... : string(...))
+** arrExt->arr1: [=, &, !] 
+*/
+int queryDecode(void *arrExt, void *str)
+{
+    ArrayExt *array = arrExt;
+    array->len = 0;
+    int arrPair = 2;
+    array->arr2 = calloc(2 * arrPair, sizeof(char *));
+    array->arr1 = calloc(2 * arrPair, sizeof(char));
+
+    /*
+    ** regular expression for 'find': ^\s*((("[^"\\]*(\\.[^"\\]*)*")|\*)\s*(=|!|>|<)\s*(("[^"\\]*(\\.[^"\\]*)*")|\*)\s*(&|\|)\s*)*((("[^"\\]*(\\.[^"\\]*)*")|\*)\s*(=|!|>|<)\s*(("[^"\\]*(\\.[^"\\]*)*")|\*))\s*$
+    */
+    regex_t regex;
+    regmatch_t match;
+    char pattern[] = "^\\s*(((\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\")|\\*)\\s*(=|!|>|<)\\s*((\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\")|\\*)\\s*(&|\\|)\\s*)*(((\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\")|\\*)\\s*(=|!|>|<)\\s*((\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\")|\\*))\\s*$";
+    if (regcomp(&regex, pattern, REG_EXTENDED) != 0)
+    {
+        //regerror
+    }
+
+    if (regexec(&regex, str, 1, &match, 0) == REG_NOMATCH)
+    {
+        /*
+        ** syntax error
+        ** function : regerror(...), for error information.
+        */
+        regfree(&regex);
+        return 0;
+    }
+    else
+    {
+        regfree(&regex);
+        /*
+        ** regular expression: ("[^"\\]*(\\.[^"\\]*)*")|\*
+        */
+        strcpy(pattern, "(\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\")|\\*");
+
+        if (regcomp(&regex, pattern, REG_EXTENDED) != 0)
+        {
+            //regerror
+        }
+
+        char *key, *value, eq = 0, lop = 0;
+        char *p = str;
+        while (*p)
+        {
+            if (regexec(&regex, p, 1, &match, 0) == REG_NOMATCH)
+            {
+                break;
+            }
+            key = p + match.rm_so;
+            if (*key == '"')
+            {
+                *(p + match.rm_eo - 1) = 0;
+            }
+            p += match.rm_eo;
+            p = strTrim(p);
+
+            eq = *p;
+            *p = 0;
+            p++;
+
+            if (regexec(&regex, p, 1, &match, 0) == REG_NOMATCH)
+            {
+                break;
+            }
+            value = p + match.rm_so;
+            if (*value == '"')
+            {
+                *(p + match.rm_eo - 1) = 0;
+            }
+            p += match.rm_eo;
+            p = strTrim(p);
+
+            lop = *p;
+            if (*p)
+            {
+                *p = 0;
+                p++;
+            }
+
+            if (*key == '"' && strlen(key) <= 1)
+            {
+                regfree(&regex);
+                array->len = 0;
+                return 0;
+            }
+
+            if ((array->len) >= arrPair)
+            {
+                arrPair *= 2;
+                void *tmp1 = realloc(array->arr1, 2 * arrPair * sizeof(char));
+                void *tmp2 = realloc(array->arr2, 2 * arrPair * sizeof(char *));
+                if (tmp1 && tmp2)
+                {
+                    array->arr1 = tmp1;
+                    array->arr2 = tmp2;
+                }
+                else
+                {
+                    //error
+                }
+            }
+            ((char *)array->arr1)[2 * array->len] = eq;
+            ((char *)array->arr1)[2 * array->len + 1] = lop;
+            array->arr2[2 * array->len] = key;
+            array->arr2[2 * array->len + 1] = value;
+            array->len++;
+        }
+    }
+    regfree(&regex);
+    return 1;
 }
