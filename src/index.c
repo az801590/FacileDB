@@ -1,526 +1,692 @@
 #include <stdint.h>
-#include <string.h>
-#include <time.h>
-#include <dirent.h>
-#include <sys/types.h>
+#include <stdbool.h>
+#include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <sys/mman.h>
 #include <unistd.h>
 
-#include "util.h"
+#include "hash.h"
 #include "index.h"
-#include "DB.h"
 
-int indexExist(void *);
-void *getNodeName(const int);
-int indexInit(void *);
-void closeIndex();
-int cmpData(void *, void *);
-int nodeNum(void *, void *, int, int);
-void *newNode(const int);
-void *loadNode(const int);
-int makeIndex(void *, void *);
-void insertIndex(void *);
-void insertIntoNode(void *, void *, int, const int);
-int indexSearch(void *, const int, void *);
-int indexSearch2(void *, const int, void *);
-
-extern DbInfo dbInfo;
-extern void getRecords(void *, void *);
-extern int setExist(void *);
-extern int setInit(void *);
-
-int indexExist(void *indexName)
+// Structure definition
+typedef struct
 {
-    //path: ./dbs/dbName/setName/index/indexName
-    char path[BUFF_LEN] = {0};
-    strncpy(path, dbInfo.setInfo.path, BUFF_LEN);
-    strncat(path, "/index/", BUFF_LEN);
-    strncat(path, indexName, BUFF_LEN);
+    HASH_VALUE_T index_id;
+    uint8_t index_payload[INDEX_PAYLOAD_SIZE];
+} INDEX_ELEMENT_T;
 
-    DIR *dir = opendir(path);
-    if (!dir)
+typedef struct
+{
+    // tag is a 1-based number, tag=0 means null
+    uint32_t tag;
+
+    uint32_t level;
+    uint32_t length; // length of elements array
+
+    uint32_t parent_tag;
+    uint32_t next_tag;
+    // child_tag is a 1-based number and initilized as 0.
+    uint32_t child_tag[INDEX_CHILD_TAG_ORDER];
+
+    INDEX_ELEMENT_T elements[INDEX_ORDER];
+} INDEX_NODE_T;
+
+typedef struct
+{
+    // tag_num == max(tag)
+    uint32_t tag_num;
+    uint32_t root_tag;
+
+    uint32_t key_size; // bytes
+    uint8_t *p_key;
+
+    // HASH_VALUE_T integrity;
+} INDEX_PROPERTIES_T;
+
+typedef struct
+{
+    FILE *index_file;
+    INDEX_PROPERTIES_T index_properties;
+} INDEX_INFO_T;
+// End of structure definition
+
+// Static Varialbes
+static INDEX_INFO_T index_info_instance;
+static char index_directory_path[INDEX_FILE_PATH_BUFFER_LENGTH];
+// End of Static Variables
+
+// Local function declaration.
+void index_info_instances_init();
+bool set_index_directory_path(char *p_index_directory_path);
+INDEX_INFO_T *load_index_info(char *p_key);
+INDEX_INFO_T *request_empty_index_info_instance();
+void close_index(INDEX_INFO_T *index_info);
+INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_size);
+void get_index_file_path_by_index_key(char *p_index_file_path, char *p_index_key);
+void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t key_size);
+void read_index_properties(INDEX_INFO_T *p_index_info);
+void write_index_properties(INDEX_INFO_T *p_index_info);
+void write_index_node(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node);
+void setup_index_element(INDEX_ELEMENT_T *p_index_element, uint8_t *p_target, uint32_t target_size, uint8_t *p_payload, uint32_t payload_size);
+void index_node_init(INDEX_NODE_T *p_index_node, uint32_t tag);
+off_t get_node_offset(INDEX_INFO_T *p_index_info, uint32_t tag);
+bool read_index_node(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_NODE_T *p_index_node);
+uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element);
+void split_index_elements_into_two_index_node(INDEX_ELEMENT_T *p_index_element_buffer, uint32_t index_element_buffer_length, INDEX_NODE_T *p_index_node_current, INDEX_NODE_T *p_index_node_sibling);
+void split_child_tags_into_two_index_node(INDEX_INFO_T *p_index_info, uint32_t *p_child_tag_buffer, uint32_t child_tag_buffer_length, INDEX_NODE_T *p_index_node_current, INDEX_NODE_T *p_index_node_sibling);
+void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element, uint32_t new_child_tag);
+void insert_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_index_element);
+uint8_t *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length);
+uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length);
+// End of local function declaration
+
+void Index_Api_Init(char *p_index_directory_path)
+{
+    // Initialize index dorectory path.
+    set_index_directory_path(p_index_directory_path);
+
+    // Initialize index info instances.
+    index_info_instances_init();
+}
+
+void index_info_instances_init()
+{
+    index_info_instance.index_file = NULL;
+    memset(&(index_info_instance.index_properties), 0, sizeof(INDEX_PROPERTIES_T));
+}
+
+bool set_index_directory_path(char *p_index_directory_path)
+{
+    struct stat index_directory_stat;
+
+    // Because the
+    strncpy(index_directory_path, p_index_directory_path, INDEX_FILE_PATH_MAX_LENGTH - 1);
+    index_directory_path[INDEX_FILE_PATH_MAX_LENGTH] = '\0';
+
+    // add '/' at the end of the path if the last char is not '/'
+    if (index_directory_path[strlen(index_directory_path) - 1] != '/')
     {
-        return 0;
+        index_directory_path[strlen(index_directory_path) - 1] = '/';
+    }
+
+    // Check if index directory exists or not.
+    if (stat(index_directory_path, &index_directory_stat) != 0 || !(S_ISDIR(index_directory_stat.st_mode)))
+    {
+        char temp_path_buffer[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
+        // Index directory doesen't exist. Create a new direcotry
+        for (char *p = strchr(index_directory_path + 1, '/'); p != NULL; p = strchr(p + 1, '/'))
+        {
+            strncpy(temp_path_buffer, index_directory_path, p - index_directory_path);
+            temp_path_buffer[p - index_directory_path + 1] = '\0';
+
+            if (mkdir(temp_path_buffer, 0666) == -1)
+            {
+                perror("Create index directory fail!");
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+void Index_Api_Insert_Element(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint8_t *p_index_payload, uint32_t payload_size)
+{
+    INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key));
+    uint32_t root_tag = 0;
+    INDEX_ELEMENT_T index_element;
+
+    if (p_index_info == NULL)
+    {
+        p_index_info = load_index_info(p_index_key);
+    }
+    root_tag = p_index_info->index_properties.root_tag;
+
+    setup_index_element(&index_element, p_target, target_size, (uint8_t *)p_index_payload, payload_size);
+    insert_index_element(p_index_info, root_tag, &index_element);
+}
+
+INDEX_INFO_T *load_index_info(char *p_key)
+{
+    INDEX_INFO_T *p_index_info = request_empty_index_info_instance();
+    char index_file_path[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
+
+    get_index_file_path_by_index_key(index_file_path, p_key);
+
+    if (access(index_file_path, F_OK) == 0)
+    {
+        // Index file exists
+        if (access(index_file_path, R_OK | W_OK) == 0)
+        {
+            // Index file readable & writable
+            p_index_info->index_file = fopen(index_file_path, "rb+");
+        }
+        else
+        {
+            // index file unreadable or unwritable
+            perror("Index file unavailable: ");
+            return NULL;
+        }
     }
     else
     {
-        closedir(dir);
-        return 1;
+        // Index file doesn't exist. Create a new index file.
+        p_index_info->index_file = fopen(index_file_path, "wb+");
+        if (p_index_info->index_file == NULL)
+        {
+            // create index file failed.
+            perror("Index file unavailable: ");
+            return NULL;
+        }
+    }
+
+    index_properties_init(p_index_info, (uint8_t *)p_key, strlen(p_key));
+    return p_index_info;
+}
+
+// todo: using fifo queue or lru algorithm.
+INDEX_INFO_T *request_empty_index_info_instance()
+{
+    if (index_info_instance.index_file != NULL)
+    {
+        close_index(&index_info_instance);
+    }
+
+    return &index_info_instance;
+}
+
+void close_index(INDEX_INFO_T *index_info)
+{
+    // writeback_index_properties();
+
+    fclose(index_info->index_file);
+    index_info->index_file = NULL;
+}
+
+void Index_Api_Close()
+{
+    if (index_info_instance.index_file != NULL)
+    {
+        close_index(&index_info_instance);
     }
 }
 
-void *getNodeName(const int tag)
+INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_size)
 {
-    char *pathName = calloc(1, BUFF_LEN * sizeof(char));
-    char temp[BUFF_LEN];
-    strcpy(pathName, dbInfo.setInfo.indexInfo.path);
-    strcat(pathName, "/");
-    snprintf(temp, sizeof(temp), "%d", tag);
-    strncat(pathName, temp, BUFF_LEN);
+    if (index_info_instance.index_file)
+    {
+        uint32_t min_key_compare_length = (index_key_size > index_info_instance.index_properties.key_size) ? (index_info_instance.index_properties.key_size) : (index_key_size);
+        if (memcmp(index_info_instance.index_properties.p_key, p_index_key, min_key_compare_length) == 0)
+        {
+            return &index_info_instance;
+        }
+    }
 
-    return pathName;
+    return NULL;
 }
 
-int indexInit(void *indexName)
+void get_index_file_path_by_index_key(char *p_index_file_path, char *p_index_key)
 {
-    if (dbInfo.setInfo.indexInfo.properties)
+    // Default: ./index_key.index
+    // TODO: check p_key contains sensitive keywords. e.g. '/'
+    strncpy(p_index_file_path, index_directory_path, INDEX_FILE_PATH_MAX_LENGTH);
+    p_index_file_path[INDEX_FILE_PATH_MAX_LENGTH] = '\0';
+    strncat(p_index_file_path, p_index_key, INDEX_FILE_PATH_MAX_LENGTH - strlen(p_index_file_path));
+    p_index_file_path[INDEX_FILE_PATH_MAX_LENGTH] = '\0';
+}
+
+// Read index_properties or init an index_properties and a first node and write it into file
+void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t key_size)
+{
+    off_t file_size = 0;
+    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+
+    fseek(p_index_info->index_file, 0, SEEK_END);
+    file_size = ftell(p_index_info->index_file);
+
+    if (file_size == 0)
     {
-        if (strncmp(dbInfo.setInfo.indexInfo.properties->name, indexName, BUFF_LEN) == 0)
+        INDEX_NODE_T first_node;
+
+        p_index_properties->p_key = malloc(key_size * sizeof(uint8_t));
+        memcpy(p_index_properties->p_key, p_key, key_size);
+        p_index_properties->key_size = key_size;
+        p_index_properties->root_tag = 0;
+        p_index_properties->tag_num = 0;
+
+        // insert an empty node with node tag: 1
+        index_node_init(&first_node, ++(p_index_properties->tag_num));
+        p_index_properties->root_tag = first_node.tag;
+
+        // write to file
+        write_index_properties(p_index_info);
+        write_index_node(p_index_info, &first_node);
+    }
+    else
+    {
+        // TODO: Checker, node number matches, size matches
+        read_index_properties(p_index_info);
+    }
+}
+
+void read_index_properties(INDEX_INFO_T *p_index_info)
+{
+    FILE *p_index_file = p_index_info->index_file;
+    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+
+    fseek(p_index_file, 0, SEEK_SET);
+    // Read tag_num and root_tag
+    fread(&(p_index_properties->tag_num), sizeof(p_index_properties->tag_num), 1, p_index_file);
+    fread(&(p_index_properties->root_tag), sizeof(p_index_properties->root_tag), 1, p_index_file);
+
+    // Read key_size
+    fread(&(p_index_properties->key_size), sizeof(p_index_properties->key_size), 1, p_index_file);
+    // Read key
+    p_index_properties->p_key = malloc(p_index_properties->key_size);
+    fread(p_index_properties->p_key, p_index_properties->key_size, 1, p_index_file);
+}
+
+void write_index_properties(INDEX_INFO_T *p_index_info)
+{
+    FILE *p_index_file = p_index_info->index_file;
+    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+
+    fseek(p_index_file, 0, SEEK_SET);
+
+    // Write tag_num & root_tag
+    fwrite(&(p_index_properties->tag_num), sizeof(p_index_properties->tag_num), 1, p_index_file);
+    fwrite(&(p_index_properties->root_tag), sizeof(p_index_properties->root_tag), 1, p_index_file);
+
+    // Write key_size
+    fwrite(&(p_index_properties->key_size), sizeof(p_index_properties->key_size), 1, p_index_file);
+    // Write key
+    fwrite(p_index_properties->p_key, p_index_properties->key_size, 1, p_index_file);
+}
+
+void write_index_node(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node)
+{
+    uint32_t node_tag = p_index_node->tag;
+    off_t node_offset = get_node_offset(p_index_info, node_tag);
+    FILE *p_index_file = p_index_info->index_file;
+
+    fseek(p_index_file, node_offset, SEEK_SET);
+    // TODO: split
+    fwrite(p_index_node, sizeof(INDEX_NODE_T), 1, p_index_file);
+}
+
+void setup_index_element(INDEX_ELEMENT_T *p_index_element, uint8_t *p_target, uint32_t target_size, uint8_t *p_payload, uint32_t payload_size)
+{
+    payload_size = (payload_size > INDEX_PAYLOAD_SIZE) ? INDEX_PAYLOAD_SIZE : payload_size;
+
+    if (payload_size > 0 && p_payload != NULL)
+    {
+        memcpy(p_index_element->index_payload, p_payload, payload_size);
+    }
+
+#if __INDEX_TEST__
+    p_index_element->index_id = *((HASH_VALUE_T *)p_target);
+#else
+    p_index_element->index_id = Hash(p_target, target_size);
+#endif
+}
+
+void index_node_init(INDEX_NODE_T *p_index_node, uint32_t tag)
+{
+    memset(p_index_node, 0, sizeof(INDEX_NODE_T));
+    p_index_node->tag = tag;
+}
+
+off_t get_node_offset(INDEX_INFO_T *p_index_info, uint32_t tag)
+{
+    size_t index_properties_size = 0;
+    size_t index_node_size = 0;
+    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+
+    index_properties_size = sizeof(p_index_properties->tag_num) + sizeof(p_index_properties->root_tag) + sizeof(p_index_properties->key_size);
+    index_properties_size += p_index_properties->key_size;
+
+    index_node_size = sizeof(INDEX_NODE_T);
+
+    // tag is a 1-based number.
+    return index_properties_size + ((tag - 1) * index_node_size);
+}
+
+// return sucessful or not
+bool read_index_node(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_NODE_T *p_index_node)
+{
+    // tag is a 1-index number and it should smaller than the tag number.
+    if (p_index_info->index_properties.tag_num < tag)
+    {
+        // Index node doesn't exist
+        return false;
+    }
+
+    FILE *p_index_file = p_index_info->index_file;
+    off_t node_offset = get_node_offset(p_index_info, tag);
+
+    fseek(p_index_file, node_offset, SEEK_SET);
+    fread(p_index_node, sizeof(INDEX_NODE_T), 1, p_index_file);
+
+    return true;
+}
+
+// Find the array position in the node where the new element should insert into.
+// Return the minimum element position where the value is equal or greater than the inputed value.
+uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element)
+{
+    // binary search index_element position.
+    // find equal or upper bound (ceiling child_tag in the node)
+    uint32_t start = 0;
+    uint32_t end = p_index_node->length; // [start, end)
+
+    while (start < end)
+    {
+        uint32_t mid = start + ((end - start) / 2);
+        HASH_VALUE_COMPARE_RESULT cmp_result = Hash_Compare(p_index_element->index_id, p_index_node->elements[mid].index_id);
+
+        if (cmp_result == HASH_VALUE_LEFT_GREATER)
         {
-            return 1;
+            // grater than [mid]
+            start = mid + 1;
         }
         else
         {
-            closeIndex();
+            // Smaller or equals to [mid]
+            end = mid;
         }
     }
-
-    char path[BUFF_LEN] = {0};
-    int fd = -1;
-    //dbInfo.setInfo.indexInfo.path = ./dbs/dbName/setName/index/indexName
-    strncpy(dbInfo.setInfo.indexInfo.path, dbInfo.setInfo.path, BUFF_LEN);
-    strncat(dbInfo.setInfo.indexInfo.path, "/index/", BUFF_LEN);
-    strncat(dbInfo.setInfo.indexInfo.path, indexName, BUFF_LEN);
-
-    //path = ./dbs/dbName/setName/index/indexName/properties
-    strncpy(path, dbInfo.setInfo.indexInfo.path, BUFF_LEN);
-    strncat(path, "/properties", BUFF_LEN);
-
-    if ((fd = open(path, O_RDWR, 0644)) < 0)
-    {
-        if ((fd = open(path, O_RDWR | O_CREAT, 0644)) >= 0)
-        {
-            IndexProperties new = {.root = -1, .tags = 0};
-            strncpy(new.name, indexName, BUFF_LEN);
-            if (write(fd, &new, sizeof(IndexProperties)) != sizeof(IndexProperties))
-            {
-                perror("Write index properties file failed");
-                return 0;
-            }
-        }
-        else
-        {
-            perror("Create index-properties file failed");
-            return 0;
-        }
-    }
-
-    dbInfo.setInfo.indexInfo.properties = mmap(NULL, sizeof(IndexProperties), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    close(fd);
-
-    if (dbInfo.setInfo.indexInfo.properties == MAP_FAILED)
-    {
-        dbInfo.setInfo.indexInfo.properties = NULL;
-        perror("Map index-propserties file failed");
-        return 0;
-    }
-
-    if (dbInfo.setInfo.indexInfo.properties->root == -1)
-    {
-        Node *root = (Node *)newNode(0);
-        dbInfo.setInfo.indexInfo.properties->root = root->tag;
-        munmap(root, sizeof(Node));
-    }
-    return 1;
-}
-
-void closeIndex()
-{
-    munmap(dbInfo.setInfo.indexInfo.properties, sizeof(IndexProperties));
-    dbInfo.setInfo.indexInfo.properties = NULL;
-    dbInfo.setInfo.indexInfo.path[0] = 0;
-}
-
-int cmpData(void *str1, void *str2)
-{
-    return strncmp(str1, str2, INDEX_LEN);
-}
-
-// find the position while data(default: string) try to add into node n
-// method: Binary search
-int nodeNum(void *node, void *str, int start, int end)
-{
-    Node *n = node;
-    if (start <= end)
-    {
-        int mid = start + (end - start) / 2;
-        int cmp = cmpData(str, n->element[mid].data);
-
-        if (start == end)
-        {
-            if (cmp > 0)
-            {
-                start += 1;
-            }
-        }
-        else
-        {
-            if (cmp > 0)
-            {
-                return nodeNum(n, str, mid + 1, end);
-            }
-            else
-            {
-                return nodeNum(n, str, start, mid - 1);
-            }
-        }
-    }
+    assert((start == end) && (start <= p_index_node->length));
     return start;
-
-    // method: linear search
-    /*
-    int i;
-    for (i = 0; i < (n->length); i++)
-    {
-        if (compareStr(str, (n->element[i]).data) <= 0)
-        {
-            break;
-        }
-    }
-    return i;
-    */
 }
 
-void *newNode(const int level)
+void split_index_elements_into_two_index_node(INDEX_ELEMENT_T *p_index_element_buffer, uint32_t index_element_buffer_length, INDEX_NODE_T *p_index_node_current, INDEX_NODE_T *p_index_node_sibling)
 {
-    if (dbInfo.setInfo.indexInfo.properties)
+    uint32_t start_position, copy_length;
+    bool is_leaf_node = (p_index_node_current->child_tag[0] == 0) ? true : false;
+
+    // Copy first half of index elements into current node.
+    start_position = 0;
+    copy_length = index_element_buffer_length / 2;
+    memcpy(p_index_node_current->elements, p_index_element_buffer, sizeof(INDEX_ELEMENT_T) * copy_length);
+    p_index_node_current->length = copy_length;
+
+    // Copy second half of index elements into the sibling node.
+    if (is_leaf_node)
     {
-        //init node
-        Node *n = calloc(1, sizeof(Node));
-        n->tag = dbInfo.setInfo.indexInfo.properties->tags;
-        n->level = level;
-        n->length = 0;
-        n->prevTag = -1;
-        n->nextTag = -1;
-        for (int i = 0; i < ORDER + 1; i++)
-        {
-            (n->childTag)[i] = -1;
-        }
-
-        char *path = (char *)getNodeName(dbInfo.setInfo.indexInfo.properties->tags);
-        dbInfo.setInfo.indexInfo.properties->tags++;
-
-        int fd = open(path, O_RDWR | O_CREAT, 0666);
-        if (fd != -1)
-        {
-            write(fd, n, sizeof(Node));
-            free(n);
-
-            n = mmap(NULL, sizeof(Node), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-            close(fd);
-
-            return n;
-        }
-    }
-    return NULL;
-}
-
-void *loadNode(const int tag)
-{
-    char *path = (char *)getNodeName(tag);
-
-    int fd = open(path, O_RDWR, 0666);
-    free(path);
-
-    if (fd >= 0)
-    {
-        return mmap(NULL, sizeof(Node), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    }
-    return NULL;
-}
-
-/*
-** return -1: indexName syntax error.
-** return -2: index has already existed.
-** return -3: create directory failed.
-** return -4: Can not init index.(index error)
-** return -5: set error
-*/
-int makeIndex(void *setName, void *str)
-{
-    if (setExist(setName) && setInit(setName))
-    {
-        char *indexName, *end;
-        if ((indexName = strchr(str, '"')) && (end = strrchr(str, '"')))
-        {
-            indexName++;
-            *end = 0;
-        }
-        else
-        {
-            return -1;
-        }
-
-        if (!indexExist(indexName))
-        {
-            //dirPath: ./dbs/dbName/setName/index/indexName
-            char dirPath[BUFF_LEN] = {0};
-            strncpy(dirPath, dbInfo.setInfo.path, BUFF_LEN);
-            strncat(dirPath, "/index/", BUFF_LEN);
-            strncat(dirPath, indexName, BUFF_LEN);
-
-            if (mkdir(dirPath, 0750) == 0)
-            {
-                printf("Create index directory: %s\n", (char *)indexName);
-
-                indexInit(indexName);
-                if (dbInfo.setInfo.indexInfo.properties)
-                {
-                    Block buffer[TMPSIZE];
-                    int readSize = 0;
-                    int counter = 0;
-                    Index new;
-                    ArrayExt records = {.arr1 = NULL, .arr2 = NULL, .len = 0};
-
-                    lseek(dbInfo.setInfo.file, 0, SEEK_SET);
-                    while ((readSize = read(dbInfo.setInfo.file, &buffer, TMPSIZE * sizeof(Block))) > 0)
-                    {
-                        for (int i = 0; i < (int)(readSize / sizeof(Block)); i++)
-                        {
-                            if (!(buffer[i].delete))
-                            {
-                                getRecords(&records, buffer[i].data);
-                                for (int j = 0; j < records.len; j++)
-                                {
-                                    //seq search;to imporve, use binary search
-                                    if (strncmp(indexName, records.arr2[2 * j], DATA_SIZE) == 0)
-                                    {
-                                        new.offset = (lseek(dbInfo.setInfo.file, 0, SEEK_CUR) - readSize + i * sizeof(Block));
-                                        new.rid = buffer[i].rid;
-                                        strncpy(new.data, records.arr2[2 * j + 1], INDEX_LEN);
-
-                                        insertIndex(&new);
-                                        counter++;
-                                        break;
-                                    }
-                                }
-                                free(records.arr2);
-                            }
-                        }
-                    }
-
-                    return counter;
-                }
-                else
-                {
-                    //Can not init index
-                    return -4;
-                }
-            }
-            else
-            {
-                perror("Create index directory failed");
-                return -3;
-            }
-        }
-        else
-        {
-            return -2;
-        }
+        start_position = copy_length;
+        copy_length = index_element_buffer_length - copy_length;
     }
     else
     {
-        return -5;
+        // If current node and sibling node are not leaf nodes, it doesn't need to copy the [mid] element to sibling node.
+        // The [mid] element should be inserted to parent node.
+        start_position = copy_length + 1;
+        copy_length = index_element_buffer_length - copy_length - 1;
+    }
+    memcpy(p_index_node_sibling->elements, &(p_index_element_buffer[start_position]), sizeof(INDEX_ELEMENT_T) * copy_length);
+    p_index_node_sibling->length = copy_length;
+}
+
+void split_child_tags_into_two_index_node(INDEX_INFO_T *p_index_info, uint32_t *p_child_tag_buffer, uint32_t child_tag_buffer_length, INDEX_NODE_T *p_index_node_current, INDEX_NODE_T *p_index_node_sibling)
+{
+    uint32_t first_half_length = (child_tag_buffer_length / 2) + (child_tag_buffer_length % 2);
+    uint32_t second_half_length = child_tag_buffer_length - first_half_length;
+    INDEX_NODE_T second_half_child_index_node;
+
+    // Copy first half of child tags to current node.
+    memcpy(p_index_node_current->child_tag, p_child_tag_buffer, sizeof(uint32_t) * first_half_length);
+    // Copy second half of child tags to sibling node.
+    memcpy(p_index_node_sibling->child_tag, &(p_child_tag_buffer[first_half_length]), sizeof(uint32_t) * second_half_length);
+    // update the parent tag of the second half child nodes to sibling node tag.
+    for (uint32_t i = 0; i < second_half_length; i++)
+    {
+        read_index_node(p_index_info, p_index_node_sibling->child_tag[i], &second_half_child_index_node);
+        second_half_child_index_node.parent_tag = p_index_node_sibling->tag;
+        write_index_node(p_index_info, &second_half_child_index_node);
     }
 }
 
-void insertIndex(void *index)
+void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element, uint32_t new_child_tag)
 {
-    Index *e = index;
-    Node *n = loadNode(dbInfo.setInfo.indexInfo.properties->root);
-    int num = -1;
-    for (num = nodeNum(n, e->data, 0, n->length - 1); n->level != 0; num = nodeNum(n, e->data, 0, n->length - 1))
+    uint32_t position = find_element_position_in_the_node(p_index_node, p_index_element);
+    uint32_t tag_position = position + 1;
+    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+
+    if (p_index_node->length >= INDEX_ORDER)
     {
-        int child = n->childTag[num];
-        munmap(n, sizeof(Node));
-        n = loadNode(child);
-    }
-    insertIntoNode(n, e, num, -1);
-}
+        // index node is full.
+        // split current node into two nodes and insert the [INDEX_ORDER / 2] element to the parent node.
+        INDEX_NODE_T parent_node, new_sibling_node;
+        INDEX_ELEMENT_T index_elements_buffer[INDEX_ORDER + 1];
+        uint32_t child_tags_buffer[INDEX_CHILD_TAG_ORDER + 1];
+        uint32_t mid_position = (INDEX_ORDER + 1) / 2;
+        bool is_leaf_node = (p_index_node->child_tag[0] == 0) ? true : false;
 
-void insertIntoNode(void *node, void *index, int num, const int newChildTag)
-{
-    Node *n = node;
-    Index *e = index;
-
-    for (int i = (n->length); i > num; i--)
-    {
-        memcpy(&(n->element[i]), &(n->element[i - 1]), sizeof(Index));
-        n->childTag[i + 1] = n->childTag[i];
-    }
-
-    (n->length)++;
-    memcpy(&(n->element[num]), e, sizeof(Index));
-
-    if (newChildTag != -1)
-    {
-        n->childTag[num + 1] = newChildTag;
-    }
-
-    if ((n->length) >= ORDER)
-    {
-        Node *new = (Node *)newNode(n->level);
-        Node *prev = NULL;
-        int up = -1;
-
-        if (n->nextTag != -1)
+        // insert the current node and the new element into buffer by order.
+        if (position > 0)
         {
-            new->nextTag = n->nextTag;
+            memcpy(index_elements_buffer, &(p_index_node->elements[0]), sizeof(INDEX_ELEMENT_T) * position);
+        }
+        memcpy(&(index_elements_buffer[position]), p_index_element, sizeof(INDEX_ELEMENT_T));
+        if (position < INDEX_ORDER)
+        {
+            memcpy(&(index_elements_buffer[position + 1]), &(p_index_node->elements[position]), sizeof(INDEX_ELEMENT_T) * (INDEX_ORDER - position));
         }
 
-        if (n->prevTag == -1)
+        // Insert the current child tags and new_child_tag into buffer by order.
+        // new_child_tag is the child tag that greater than the inputted element.
+        if (tag_position > 0)
         {
-            prev = (Node *)newNode((n->level) + 1);
-            prev->childTag[0] = n->tag;
-            n->prevTag = prev->tag;
-            //update root
-            dbInfo.setInfo.indexInfo.properties->root = prev->tag;
+            memcpy(child_tags_buffer, &(p_index_node->child_tag[0]), sizeof(uint32_t) * tag_position);
+        }
+        child_tags_buffer[tag_position] = new_child_tag;
+        if (tag_position < INDEX_CHILD_TAG_ORDER)
+        {
+            memcpy(&(child_tags_buffer[tag_position + 1]), &(p_index_node->child_tag[tag_position]), sizeof(uint32_t) * (INDEX_CHILD_TAG_ORDER - tag_position));
+        }
+
+        // Create and initialize the sibling Node
+        p_index_properties->tag_num++;
+        index_node_init(&new_sibling_node, p_index_properties->tag_num);
+        new_sibling_node.level = p_index_node->level;
+        new_sibling_node.parent_tag = p_index_node->parent_tag;
+        new_sibling_node.next_tag = p_index_node->next_tag;
+        p_index_node->next_tag = new_sibling_node.tag;
+
+        // Create or load parent node.
+        if (p_index_node->parent_tag == 0)
+        {
+            // no parent node, create a new one.
+            p_index_properties->tag_num++;
+            index_node_init(&parent_node, p_index_properties->tag_num);
+            parent_node.child_tag[0] = p_index_node->tag;
+            parent_node.level = p_index_node->level + 1;
+            p_index_properties->root_tag = parent_node.tag;
+
+            p_index_node->parent_tag = parent_node.tag;
+            new_sibling_node.parent_tag = parent_node.tag;
         }
         else
         {
-            prev = (Node *)loadNode(n->prevTag);
+            read_index_node(p_index_info, p_index_node->parent_tag, &parent_node);
         }
 
-        n->nextTag = new->tag;
-        new->prevTag = prev->tag;
-
-        for (int i = ORDER / 2 + 1, j = 0; i < (n->length); i++, j++)
+        // Insert first half of the elements in the buffer into current node and insert the second half of the elements into sibling node.
+        // If the current node is a leaf node, copy the [mid] element to new sibling node to keep it in the leaf.
+        // If current node is not a leaf node, we don't have to keep it in any node in the current node level.
+        split_index_elements_into_two_index_node(index_elements_buffer, INDEX_ORDER + 1, p_index_node, &new_sibling_node);
+        if (is_leaf_node == false)
         {
-            memcpy(&(new->element[j]), &(n->element[i]), sizeof(Index));
-            new->childTag[j] = n->childTag[i];
-
-            //update new->childTag[j]->prevTag
-            if (n->level != 0)
-            {
-                Node *child = loadNode(new->childTag[j]);
-                child->prevTag = new->tag;
-                munmap(child, sizeof(Node));
-            }
+            split_child_tags_into_two_index_node(p_index_info, child_tags_buffer, INDEX_CHILD_TAG_ORDER + 1, p_index_node, &new_sibling_node);
         }
-        new->childTag[ORDER / 2] = n->childTag[ORDER];
-        if (n->level != 0)
-        {
-            //update new->childTag[ORDER/2]->prevTag
-            Node *child = loadNode(new->childTag[ORDER / 2]);
-            child->prevTag = new->tag;
-            munmap(child, sizeof(Node));
 
-            //update length
-            n->length = ORDER / 2;
-            up = n->length;
-        }
-        else
-        {
-            n->length = ORDER / 2 + 1;
-            up = (n->length) - 1;
-        }
-        new->length = ORDER / 2;
+        // write sibling node into file
+        write_index_node(p_index_info, &new_sibling_node);
 
-        munmap(new, sizeof(Node));
-        insertIntoNode(prev, &(n->element[up]), nodeNum(prev, n->element[up].data, 0, prev->length - 1), n->nextTag);
+        // write current node into file.
+        write_index_node(p_index_info, p_index_node);
+
+        write_index_properties(p_index_info);
+
+        // Insert the [mid] element to the parent node.
+        insert_index_element_handler(p_index_info, &parent_node, &(index_elements_buffer[mid_position]), new_sibling_node.tag);
+        // the above function will write parent node into file.
     }
-    munmap(n, sizeof(Node));
+    else
+    {
+        // index_node isn't full
+        // insertion sort
+        for (uint32_t i = p_index_node->length; i > position; i--)
+        {
+            // move the elements in the node which greater than the inserted element to the next position in the array.
+            memcpy(&(p_index_node->elements[i]), &(p_index_node->elements[i - 1]), sizeof(INDEX_ELEMENT_T));
+            // move child_tags
+            p_index_node->child_tag[i + 1] = p_index_node->child_tag[i];
+        }
+
+        memcpy(&(p_index_node->elements[position]), p_index_element, sizeof(INDEX_ELEMENT_T));
+        p_index_node->child_tag[tag_position] = new_child_tag;
+        p_index_node->length++;
+
+        // write current node into file.
+        write_index_node(p_index_info, p_index_node);
+    }
 }
 
-// method(inside the node): linear search
-int indexSearch(void *array, const int tag, void *str)
+void insert_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_index_element)
 {
-    ArrayExt *result = array;
-    Node *n = loadNode(tag);
+    INDEX_NODE_T index_node;
 
-    int i = 0, count = 0;
-    for (i = 0; i < (n->length); i++)
+    if (read_index_node(p_index_info, tag, &index_node) == false)
     {
-        int cmp = cmpData(str, n->element[i].data);
-        if (cmp == 0 && n->level == 0)
+        return;
+    }
+
+    // Check if the leaf node existed or not by child_tag[0], and process if reached leaf node.
+    if (index_node.child_tag[0] != 0)
+    {
+        // Current node is not a leaf node.
+        // find the insert position (and also the child_tag position). Position is in the range of [0, index_node.length].
+        uint32_t position = find_element_position_in_the_node(&index_node, p_index_element);
+        return insert_index_element(p_index_info, index_node.child_tag[position], p_index_element);
+    }
+    else
+    {
+        // Current node is a leaf node.
+        return insert_index_element_handler(p_index_info, &index_node, p_index_element, 0);
+    }
+}
+
+// return value: result array
+// result_length: integer, number of results in result array
+uint8_t *Index_Api_Search(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint32_t *result_length)
+{
+    INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key));
+    uint32_t root_tag = 0;
+    INDEX_ELEMENT_T target_index_element;
+
+    if (p_index_info == NULL)
+    {
+        p_index_info = load_index_info(p_index_key);
+    }
+    root_tag = p_index_info->index_properties.root_tag;
+    setup_index_element(&target_index_element, p_target, target_size, NULL, 0);
+
+    return search_index_element(p_index_info, root_tag, &target_index_element, result_length);
+}
+
+uint8_t *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length)
+{
+    INDEX_NODE_T index_node;
+
+    if (read_index_node(p_index_info, tag, &index_node) == false)
+    {
+        *result_length = 0;
+        return NULL;
+    }
+
+    if (index_node.child_tag[0] != 0)
+    {
+        // non-leaf
+        uint32_t position = find_element_position_in_the_node(&index_node, p_target_index_element);
+        return search_index_element(p_index_info, index_node.child_tag[position], p_target_index_element, result_length);
+    }
+    else
+    {
+        // leaf-node
+        return search_index_element_handler(p_index_info, &index_node, p_target_index_element, result_length);
+    }
+}
+
+uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length)
+{
+    uint8_t *p_search_result = NULL;
+    uint32_t position = find_element_position_in_the_node(p_index_node, p_target_index_element);
+    uint32_t compare_equal_length = 0, i = 0;
+    bool only_current_node_result = true;
+
+    for (i = position; i < p_index_node->length; i++)
+    {
+        if (Hash_Compare(p_target_index_element->index_id, p_index_node->elements[i].index_id) == HASH_VALUE_EQUAL)
         {
-            count++;
+            compare_equal_length++;
         }
-        else if (cmp <= 0)
+        else
         {
             break;
         }
     }
 
-    if (count > 0)
+    if ((i == p_index_node->length) && (p_index_node->next_tag != 0))
     {
-        //search nextNode
-        if (n->nextTag != -1 && i == (n->length))
-        {
-            indexSearch(result, n->nextTag, str);
-        }
+        // The target node may also existed in the next node, search next node.
+        INDEX_NODE_T next_index_node;
+        uint8_t *next_index_node_search_result = NULL;
 
-        if (result->arr1)
+        if (read_index_node(p_index_info, p_index_node->next_tag, &next_index_node) == true)
         {
-            void *tmp = realloc(result->arr1, (count + (result->len)) * sizeof(Index));
-            if (tmp)
+            next_index_node_search_result = search_index_element_handler(p_index_info, &next_index_node, p_target_index_element, result_length);
+            compare_equal_length += *result_length;
+            p_search_result = realloc(next_index_node_search_result, compare_equal_length * INDEX_PAYLOAD_SIZE);
+            if (p_search_result == NULL)
             {
-                result->arr1 = tmp;
+                // allocate more memory error.
+                // Error handling: return next search result, and doesn't attach current result.
+                return next_index_node_search_result;
             }
-            else
-            {
-                //error
-            }
+            only_current_node_result = false;
         }
         else
         {
-            result->arr1 = calloc(count, sizeof(Index));
+            // read next node error
+            only_current_node_result = true;
         }
-
-        memcpy(&(((Index *)result->arr1)[result->len]), &(n->element[i - count]), count * sizeof(Index));
-        result->len += count;
-    }
-    else if (n->level != 0)
-    {
-        int child = n->childTag[i];
-        munmap(n, sizeof(Node));
-        return indexSearch(result, child, str);
     }
 
-    munmap(n, sizeof(Node));
-    return result->len;
-}
-
-/*
-** for case: (key!value) and (key=*)
-*/
-int indexSearch2(void *result, const int tag, void *value)
-{
-    Node *n = loadNode(tag);
-    if (n->level != 0)
+    if (only_current_node_result == true)
     {
-        indexSearch2(result, n->childTag[0], value);
-    }
-    else
-    {
-        ArrayExt *array = result;
-        if (value && cmpData(value, n->element[0].data) >= 0 && cmpData(value, n->element[n->length - 1].data) <= 0)
+        // The right most element is not equal to the target. No need to search next node.
+        // Or next node doesn't exist.
+        // Or next node read error.
+        *result_length = 0;
+        if (compare_equal_length > 0)
         {
-            //linear search
-            for (int i = 0; i < n->length; i++)
+            p_search_result = malloc(compare_equal_length * INDEX_PAYLOAD_SIZE);
+            if (p_search_result == NULL)
             {
-                if (cmpData(value, n->element[i].data) != 0)
-                {
-                    memcpy(&(((Index *)array->arr1)[array->len]), &(n->element[i]), sizeof(Index));
-                    array->len++;
-                }
+                // Allocate memory error
+                // return NULL pointer and length = 0
+                return NULL;
             }
         }
-        else
-        {
-            memcpy(&(((Index *)array->arr1)[array->len]), n->element, n->length * sizeof(Index));
-            array->len += n->length;
-        }
-
-        if (n->nextTag != -1)
-        {
-            indexSearch2(result, n->nextTag, value);
-        }
     }
-    munmap(n, sizeof(Node));
-    return ((ArrayExt *)result)->len;
+
+    for (i = *result_length; i < compare_equal_length; i++)
+    {
+        memcpy(p_search_result + (INDEX_PAYLOAD_SIZE * i), p_index_node->elements[i].index_payload, INDEX_PAYLOAD_SIZE);
+    }
+
+    *result_length = compare_equal_length;
+    return p_search_result;
 }

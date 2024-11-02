@@ -1,6 +1,4 @@
-dbs
-Facile
-*.o
+bin
 
-src/ideas.c
-backup
+.DS_Store
+.vscode/settings.json

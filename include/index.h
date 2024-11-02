@@ -1,41 +1,35 @@
-#define ORDER 5
-#define INDEX_LEN 112
+#ifndef __INDEX_H__
+#define __INDEX_H__
 
-struct INDEX
-{
-    uint64_t rid;
-    off_t offset;
-    char data[INDEX_LEN];
-};
-typedef struct INDEX Index;
+#include <stdlib.h>
+#include <stdio.h>
+#include "hash.h"
 
-struct NODE
-{
-    struct INDEX element[ORDER];
+#ifndef __INDEX_TEST__
+#define __INDEX_TEST__ (0)
+#endif
 
-    int level;
-    int tag;
-    int length;
 
-    int padding;
+#ifndef INDEX_ORDER
+#define INDEX_ORDER (5)
+#endif
 
-    int childTag[ORDER + 1];
-    int prevTag;
-    int nextTag;
-};
-typedef struct NODE Node;
+#ifndef INDEX_PAYLOAD_SIZE
+// ((INDEX_PAYLOAD_SIZE + sizeof(HASH_VALUE_T)) * INDEX_ORDER) should be divisible by 4.
+#define INDEX_PAYLOAD_SIZE (16)
+#endif
 
-struct INDEXPROPERTIES
-{
-    char name[BUFF_LEN];
-    int root;
-    int tags;
-};
-typedef struct INDEXPROPERTIES IndexProperties;
+#ifndef INDEX_FILE_PATH_BUFFER_LENGTH
+#define INDEX_FILE_PATH_BUFFER_LENGTH (128)
+#endif
 
-struct INDEXINFO
-{
-    char path[BUFF_LEN];
-    struct INDEXPROPERTIES *properties;
-};
-typedef struct INDEXINFO IndexInfo;
+#define INDEX_CHILD_TAG_ORDER (INDEX_ORDER + 1)
+#define INDEX_FILE_PATH_MAX_LENGTH (INDEX_FILE_PATH_BUFFER_LENGTH - 1)
+
+
+void Index_Api_Init(char *p_index_directory_path);
+void Index_Api_Insert_Element(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint8_t *p_index_payload, uint32_t payload_size);
+uint8_t *Index_Api_Search(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint32_t *result_length);
+void Index_Api_Close();
+
+#endif // __INDEX_H__
