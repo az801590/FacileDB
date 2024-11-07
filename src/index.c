@@ -99,9 +99,9 @@ void index_info_instances_init()
 bool set_index_directory_path(char *p_index_directory_path)
 {
     struct stat index_directory_stat;
+    char temp_path_buffer[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
 
-    // Because the
-    strncpy(index_directory_path, p_index_directory_path, INDEX_FILE_PATH_MAX_LENGTH - 1);
+    strncpy(index_directory_path, p_index_directory_path, INDEX_FILE_PATH_MAX_LENGTH);
     index_directory_path[INDEX_FILE_PATH_MAX_LENGTH] = '\0';
 
     // add '/' at the end of the path if the last char is not '/'
@@ -111,18 +111,23 @@ bool set_index_directory_path(char *p_index_directory_path)
     }
 
     // Check if index directory exists or not.
-    if (stat(index_directory_path, &index_directory_stat) != 0 || !(S_ISDIR(index_directory_stat.st_mode)))
+    if ((stat(index_directory_path, &index_directory_stat) == 0) && (S_ISDIR(index_directory_stat.st_mode)))
     {
-        char temp_path_buffer[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
-        // Index directory doesen't exist. Create a new direcotry
-        for (char *p = strchr(index_directory_path + 1, '/'); p != NULL; p = strchr(p + 1, '/'))
-        {
-            strncpy(temp_path_buffer, index_directory_path, p - index_directory_path);
-            temp_path_buffer[p - index_directory_path + 1] = '\0';
+        // Existed
+        return true;
+    }
 
-            if (mkdir(temp_path_buffer, 0666) == -1)
+    // Index directory doesen't exist. Create a new direcotry
+    for (char *p = strchr(index_directory_path + 1, '/'); p != NULL; p = strchr(p + 1, '/'))
+    {
+        strncpy(temp_path_buffer, index_directory_path, p - index_directory_path);
+        temp_path_buffer[p - index_directory_path + 1] = '\0';
+
+        if (stat(temp_path_buffer, &index_directory_stat) != 0 || !(S_ISDIR(index_directory_stat.st_mode)))
+        {
+            if (mkdir(temp_path_buffer, 0755) == -1)
             {
-                perror("Create index directory fail!");
+                perror("Create index directory fail");
                 return false;
             }
         }
@@ -165,7 +170,7 @@ INDEX_INFO_T *load_index_info(char *p_key)
         else
         {
             // index file unreadable or unwritable
-            perror("Index file unavailable: ");
+            perror("Index file unavailable");
             return NULL;
         }
     }
@@ -317,18 +322,19 @@ void write_index_node(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node)
 
 void setup_index_element(INDEX_ELEMENT_T *p_index_element, uint8_t *p_target, uint32_t target_size, uint8_t *p_payload, uint32_t payload_size)
 {
-    payload_size = (payload_size > INDEX_PAYLOAD_SIZE) ? INDEX_PAYLOAD_SIZE : payload_size;
-
-    if (payload_size > 0 && p_payload != NULL)
-    {
-        memcpy(p_index_element->index_payload, p_payload, payload_size);
-    }
-
 #if __INDEX_TEST__
     p_index_element->index_id = *((HASH_VALUE_T *)p_target);
 #else
     p_index_element->index_id = Hash(p_target, target_size);
 #endif
+
+    payload_size = (payload_size > INDEX_PAYLOAD_SIZE) ? INDEX_PAYLOAD_SIZE : payload_size;
+
+    memset(p_index_element->index_payload, 0, INDEX_PAYLOAD_SIZE);
+    if (payload_size > 0 && p_payload != NULL)
+    {
+        memcpy(p_index_element->index_payload, p_payload, payload_size);
+    }
 }
 
 void index_node_init(INDEX_NODE_T *p_index_node, uint32_t tag)
@@ -349,7 +355,7 @@ off_t get_node_offset(INDEX_INFO_T *p_index_info, uint32_t tag)
     index_node_size = sizeof(INDEX_NODE_T);
 
     // tag is a 1-based number.
-    return index_properties_size + ((tag - 1) * index_node_size);
+    return (index_properties_size + ((tag - 1) * index_node_size));
 }
 
 // return sucessful or not
