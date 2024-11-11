@@ -629,13 +629,14 @@ uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *
 {
     uint8_t *p_search_result = NULL;
     uint32_t position = find_element_position_in_the_node(p_index_node, p_target_index_element);
-    uint32_t compare_equal_length = 0, i = 0;
+    uint32_t compare_equal_length = 0, i = 0, match_end_position = 0;
     bool only_current_node_result = true;
 
     for (i = position; i < p_index_node->length; i++)
     {
         if (Hash_Compare(p_target_index_element->index_id, p_index_node->elements[i].index_id) == HASH_VALUE_EQUAL)
         {
+            match_end_position = i;
             compare_equal_length++;
         }
         else
@@ -688,9 +689,9 @@ uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *
         }
     }
 
-    for (i = *result_length; i < compare_equal_length; i++)
+    for (i = *result_length; i < compare_equal_length; i++, match_end_position--)
     {
-        memcpy(p_search_result + (INDEX_PAYLOAD_SIZE * i), p_index_node->elements[i].index_payload, INDEX_PAYLOAD_SIZE);
+        memcpy(p_search_result + (INDEX_PAYLOAD_SIZE * i), p_index_node->elements[match_end_position].index_payload, INDEX_PAYLOAD_SIZE);
     }
 
     *result_length = compare_equal_length;
