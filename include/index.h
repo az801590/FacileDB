@@ -9,7 +9,6 @@
 #define __INDEX_TEST__ (0)
 #endif
 
-
 #ifndef INDEX_ORDER
 #define INDEX_ORDER (5)
 #endif
@@ -26,6 +25,15 @@
 #define INDEX_CHILD_TAG_ORDER (INDEX_ORDER + 1)
 #define INDEX_FILE_PATH_MAX_LENGTH (INDEX_FILE_PATH_BUFFER_LENGTH - 1)
 
+typedef enum
+{
+#undef INDEX_ID_TYPE_CONFIG
+#define INDEX_ID_TYPE_CONFIG(index_id_type, index_id_size, compare_function) index_id_type,
+#include "index_id_type_table.h"
+#undef INDEX_ID_TYPE_CONFIG
+
+    INDEX_ID_TYPE_NUM
+} INDEX_ID_TYPE;
 
 void Index_Api_Init(char *p_index_directory_path);
 void Index_Api_Insert_Element(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint8_t *p_index_payload, uint32_t payload_size);

@@ -308,7 +308,7 @@ void test_index_search_case11()
     test_start(case_name);
 
     char p_index_key[] = "test_index_search_case11.index";
-    uint32_t target[11] = {1, 9, 9, 10, 11, 12, 12, 15, 20, 20, 20};
+    uint32_t target[11] = {1, 9, 9, 10, 11, 12, 12, 12, 12, 20, 20};
     char payload[11][INDEX_PAYLOAD_SIZE];
 
     // Operation: 11 elements
@@ -337,13 +337,12 @@ void test_index_search_case11()
         (memcmp(result, payload[1], INDEX_PAYLOAD_SIZE) == 0 && memcmp(result + INDEX_PAYLOAD_SIZE, payload[2], INDEX_PAYLOAD_SIZE) == 0) ||
         (memcmp(result, payload[2], INDEX_PAYLOAD_SIZE) == 0 && memcmp(result + INDEX_PAYLOAD_SIZE, payload[1], INDEX_PAYLOAD_SIZE) == 0)
     );
-    // printf("%s\n", result);
-    // printf("%s\n", result+INDEX_PAYLOAD_SIZE);
+    // printf("%s\n", result + INDEX_PAYLOAD_SIZE * 0);
+    // printf("%s\n", result + INDEX_PAYLOAD_SIZE * 1);
     free(result);
 
     result = Index_Api_Search(p_index_key, (uint8_t *)&(target[3]), sizeof(target[3]), &reuslt_length);
     assert(reuslt_length == 1);
-    // printf("%s\n", result);
     assert(memcmp(result, payload[3], INDEX_PAYLOAD_SIZE) == 0);
     free(result);
 
@@ -352,7 +351,19 @@ void test_index_search_case11()
     assert(memcmp(result, payload[4], INDEX_PAYLOAD_SIZE) == 0);
     free(result);
 
+    result = Index_Api_Search(p_index_key, (uint8_t *)&(target[5]), sizeof(target[5]), &reuslt_length);
+    assert(reuslt_length == 4);
+    assert(memcmp(result + INDEX_PAYLOAD_SIZE * 0, payload[5], INDEX_PAYLOAD_SIZE) == 0);
+    assert(memcmp(result + INDEX_PAYLOAD_SIZE * 1, payload[6], INDEX_PAYLOAD_SIZE) == 0);
+    assert(memcmp(result + INDEX_PAYLOAD_SIZE * 2, payload[7], INDEX_PAYLOAD_SIZE) == 0);
+    assert(memcmp(result + INDEX_PAYLOAD_SIZE * 3, payload[8], INDEX_PAYLOAD_SIZE) == 0);    
+    free(result);
 
+    result = Index_Api_Search(p_index_key, (uint8_t *)&(target[9]), sizeof(target[9]), &reuslt_length);
+    assert(reuslt_length == 2);
+    assert(memcmp(result + INDEX_PAYLOAD_SIZE * 0, payload[9], INDEX_PAYLOAD_SIZE) == 0);
+    assert(memcmp(result + INDEX_PAYLOAD_SIZE * 1, payload[10], INDEX_PAYLOAD_SIZE) == 0);
+    free(result);
     // End of the check
 
     test_end(case_name);
