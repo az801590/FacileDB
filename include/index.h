@@ -33,11 +33,11 @@ typedef enum
 #undef INDEX_ID_TYPE_CONFIG
 
     INDEX_ID_TYPE_NUM
-} INDEX_ID_TYPE;
+} INDEX_ID_TYPE_E;
 
 void Index_Api_Init(char *p_index_directory_path);
-void Index_Api_Insert_Element(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint8_t *p_index_payload, uint32_t payload_size);
-uint8_t *Index_Api_Search(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint32_t *result_length);
+void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_index_payload, uint32_t payload_size);
+void *Index_Api_Search(char *p_index_key, void *p_target, INDEX_ID_TYPE_E index_id_type, uint32_t *result_length);
 void Index_Api_Close();
 
 #endif // __INDEX_H__

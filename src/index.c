@@ -1,19 +1,19 @@
-#include <stdint.h>
-#include <stdbool.h>
 #include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "hash.h"
 #include "index.h"
+#include "index_id_type_compare.h"
 
 // Structure definition
 typedef struct
 {
-    HASH_VALUE_T index_id;
-    uint8_t index_payload[INDEX_PAYLOAD_SIZE];
+    void *p_index_id;
+    uint8_t index_payload[INDEX_PAYLOAD_SIZE / sizeof(uint8_t)];
 } INDEX_ELEMENT_T;
 
 typedef struct
@@ -37,11 +37,11 @@ typedef struct
     // tag_num == max(tag)
     uint32_t tag_num;
     uint32_t root_tag;
+    INDEX_ID_TYPE_E index_id_type; // write and read as uint32
+    // HASH_VALUE_T integrity;
 
     uint32_t key_size; // bytes
     uint8_t *p_key;
-
-    // HASH_VALUE_T integrity;
 } INDEX_PROPERTIES_T;
 
 typedef struct
@@ -49,20 +49,28 @@ typedef struct
     FILE *index_file;
     INDEX_PROPERTIES_T index_properties;
 } INDEX_INFO_T;
-// End of structure definition
 
-// Enum definition
-typedef enum
+typedef struct
 {
-    INDEX_ID_COMPARE_RIGHT_GREATER = -1,
-    INDEX_ID_COMPARE_EQUAL = 0,
-    INDEX_ID_COMPARE_LEFT_GREATER = 1
-} INDEX_ID_COMPARE_RESULT;
-// End of enum definition
+    uint32_t size;
+    // clang-format off
+    INDEX_ID_COMPARE_RESULT_E (*p_compare_func)(void *, void *);
+    // clang-format on
+} INDEX_ID_TYPE_HANDLE_TBL_T;
+// End of structure definition
 
 // Static Varialbes
 static INDEX_INFO_T index_info_instance;
 static char index_directory_path[INDEX_FILE_PATH_BUFFER_LENGTH];
+// clang-format off
+static INDEX_ID_TYPE_HANDLE_TBL_T index_id_type_handle_table[INDEX_ID_TYPE_NUM + 1] = {
+#undef INDEX_ID_TYPE_CONFIG
+#define INDEX_ID_TYPE_CONFIG(index_id_type, index_id_size, index_id_compare_function) {.size = index_id_size, .p_compare_func = index_id_compare_function},
+#include "index_id_type_table.h"
+#undef INDEX_ID_TYPE_CONFIG
+    {.size = 0, .p_compare_func = NULL}
+};
+// clang-format on
 // End of Static Variables
 
 // Local function declaration
@@ -72,11 +80,11 @@ void close_index(INDEX_INFO_T *index_info);
 void index_info_instances_init();
 INDEX_INFO_T *request_empty_index_info_instance();
 
-INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_size);
-INDEX_INFO_T *load_index_info(char *p_key);
+INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_size, INDEX_ID_TYPE_E index_id_type);
+INDEX_INFO_T *load_index_info(char *p_key, INDEX_ID_TYPE_E index_id_type);
 void get_index_file_path_by_index_key(char *p_index_file_path, char *p_index_key);
 
-void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t key_size);
+void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t key_size, INDEX_ID_TYPE_E index_id_type);
 void read_index_properties(INDEX_INFO_T *p_index_info);
 void write_index_properties(INDEX_INFO_T *p_index_info);
 size_t get_index_properties_size(INDEX_PROPERTIES_T *p_index_properties);
@@ -85,15 +93,23 @@ void close_index_properties(INDEX_PROPERTIES_T *p_index_properties);
 void index_node_init(INDEX_NODE_T *p_index_node, uint32_t tag);
 void write_index_node(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node);
 bool read_index_node(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_NODE_T *p_index_node);
-off_t get_node_offset(INDEX_INFO_T *p_index_info, uint32_t tag);
+off_t get_node_offset(INDEX_PROPERTIES_T *p_index_properties, uint32_t tag);
+void free_index_node_resources(INDEX_NODE_T *p_index_node);
 
-void setup_index_element(INDEX_ELEMENT_T *p_index_element, uint8_t *p_target, uint32_t target_size, uint8_t *p_payload, uint32_t payload_size);
-uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element);
+void index_element_init(INDEX_ELEMENT_T *p_index_element);
+void setup_index_element(INDEX_ELEMENT_T *p_index_element, void *p_target, INDEX_ID_TYPE_E index_id_type, void *p_payload, uint32_t payload_size);
+void write_index_elements(INDEX_INFO_T *p_index_info, uint32_t tag, uint32_t index_element_position, uint32_t write_length, INDEX_ELEMENT_T *p_index_element);
+void read_index_elements(INDEX_INFO_T *p_index_info, const uint32_t tag, const uint32_t index_element_position, const uint32_t read_length, INDEX_ELEMENT_T *p_index_element);
+off_t get_index_element_offset(INDEX_PROPERTIES_T *p_index_properties, uint32_t tag, uint32_t index_element_position);
+void allocate_index_element_resources(INDEX_ELEMENT_T *p_index_element, uint32_t index_id_size);
+void free_index_element_resources(INDEX_ELEMENT_T *p_index_element);
+void deep_copy_index_element(INDEX_ELEMENT_T *p_dest_index_element, INDEX_ELEMENT_T *p_src_index_element, INDEX_ID_TYPE_E index_id_type);
+uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element, INDEX_ID_TYPE_E index_id_type);
 void split_index_elements_into_two_index_node(INDEX_ELEMENT_T *p_index_element_buffer, uint32_t index_element_buffer_length, INDEX_NODE_T *p_index_node_current, INDEX_NODE_T *p_index_node_sibling);
 void split_child_tags_into_two_index_node(INDEX_INFO_T *p_index_info, uint32_t *p_child_tag_buffer, uint32_t child_tag_buffer_length, INDEX_NODE_T *p_index_node_current, INDEX_NODE_T *p_index_node_sibling);
 void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element, uint32_t new_child_tag);
 void insert_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_index_element);
-uint8_t *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length);
+void *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length);
 uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length);
 // End of local function declaration
 
@@ -114,38 +130,53 @@ void Index_Api_Close()
     }
 }
 
-void Index_Api_Insert_Element(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint8_t *p_index_payload, uint32_t payload_size)
+void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_index_payload, uint32_t payload_size)
 {
-    INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key));
+    INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key), index_id_type);
     uint32_t root_tag = 0;
     INDEX_ELEMENT_T index_element;
+    
+    index_element_init(&index_element);
 
     if (p_index_info == NULL)
     {
-        p_index_info = load_index_info(p_index_key);
+        p_index_info = load_index_info(p_index_key, index_id_type);
+    }
+    else if(p_index_info->index_properties.index_id_type != index_id_type)
+    {
+        // index_id_type doesn't match.
+        return;
     }
     root_tag = p_index_info->index_properties.root_tag;
 
-    setup_index_element(&index_element, p_target, target_size, (uint8_t *)p_index_payload, payload_size);
+    setup_index_element(&index_element, p_index_id, index_id_type, p_index_payload, payload_size);
     insert_index_element(p_index_info, root_tag, &index_element);
+
+    free_index_element_resources(&index_element);
 }
 
 // return value: result array
 // result_length: integer, number of results in result array
-uint8_t *Index_Api_Search(char *p_index_key, uint8_t *p_target, uint32_t target_size, uint32_t *result_length)
+void *Index_Api_Search(char *p_index_key, void *p_target, INDEX_ID_TYPE_E index_id_type, uint32_t *result_length)
 {
-    INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key));
+    INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key), index_id_type);
     uint32_t root_tag = 0;
     INDEX_ELEMENT_T target_index_element;
+    void *result = NULL;
+
+    index_element_init(&target_index_element);
 
     if (p_index_info == NULL)
     {
-        p_index_info = load_index_info(p_index_key);
+        p_index_info = load_index_info(p_index_key, index_id_type);
     }
     root_tag = p_index_info->index_properties.root_tag;
 
-    setup_index_element(&target_index_element, p_target, target_size, NULL, 0);
-    return search_index_element(p_index_info, root_tag, &target_index_element, result_length);
+    setup_index_element(&target_index_element, p_target, index_id_type, NULL, 0);
+    result = search_index_element(p_index_info, root_tag, &target_index_element, result_length);
+    free_index_element_resources(&target_index_element);
+
+    return result;
 }
 
 bool set_index_directory_path(char *p_index_directory_path)
@@ -201,6 +232,7 @@ void index_info_instances_init()
 {
     index_info_instance.index_file = NULL;
     memset(&(index_info_instance.index_properties), 0, sizeof(INDEX_PROPERTIES_T));
+    index_info_instance.index_properties.p_key = NULL;
 }
 
 // todo: using fifo queue or lru algorithm.
@@ -214,12 +246,12 @@ INDEX_INFO_T *request_empty_index_info_instance()
     return &index_info_instance;
 }
 
-INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_size)
+INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_size, INDEX_ID_TYPE_E index_id_type)
 {
     if (index_info_instance.index_file)
     {
         uint32_t min_key_compare_length = (index_key_size > index_info_instance.index_properties.key_size) ? (index_info_instance.index_properties.key_size) : (index_key_size);
-        if (memcmp(index_info_instance.index_properties.p_key, p_index_key, min_key_compare_length) == 0)
+        if ((memcmp(index_info_instance.index_properties.p_key, p_index_key, min_key_compare_length) == 0) && (index_info_instance.index_properties.index_id_type == index_id_type))
         {
             return &index_info_instance;
         }
@@ -228,11 +260,10 @@ INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_s
     return NULL;
 }
 
-INDEX_INFO_T *load_index_info(char *p_key)
+INDEX_INFO_T *load_index_info(char *p_key, INDEX_ID_TYPE_E index_id_type)
 {
     INDEX_INFO_T *p_index_info = request_empty_index_info_instance();
     char index_file_path[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
-
     get_index_file_path_by_index_key(index_file_path, p_key);
 
     if (access(index_file_path, F_OK) == 0)
@@ -262,7 +293,7 @@ INDEX_INFO_T *load_index_info(char *p_key)
         }
     }
 
-    index_properties_init(p_index_info, (uint8_t *)p_key, strlen(p_key));
+    index_properties_init(p_index_info, (uint8_t *)p_key, strlen(p_key), index_id_type);
     return p_index_info;
 }
 
@@ -276,8 +307,8 @@ void get_index_file_path_by_index_key(char *p_index_file_path, char *p_index_key
     p_index_file_path[INDEX_FILE_PATH_MAX_LENGTH] = '\0';
 }
 
-// Read index_properties or init an index_properties and a first node and write it into file
-void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t key_size)
+// Read index_properties or new an index_properties and a first node and write it into file
+void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t key_size, INDEX_ID_TYPE_E index_id_type)
 {
     off_t file_size = 0;
     INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
@@ -294,14 +325,17 @@ void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t 
         p_index_properties->key_size = key_size;
         p_index_properties->root_tag = 0;
         p_index_properties->tag_num = 0;
+        p_index_properties->index_id_type = index_id_type;
 
         // insert an empty node with node tag: 1
-        index_node_init(&first_node, ++(p_index_properties->tag_num));
+        p_index_properties->tag_num++;
+        index_node_init(&first_node, p_index_properties->tag_num);
         p_index_properties->root_tag = first_node.tag;
 
         // write to file
         write_index_properties(p_index_info);
         write_index_node(p_index_info, &first_node);
+        free_index_node_resources(&first_node);
     }
     else
     {
@@ -314,11 +348,17 @@ void read_index_properties(INDEX_INFO_T *p_index_info)
 {
     FILE *p_index_file = p_index_info->index_file;
     INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+    uint32_t temp_index_id_type;
 
     fseek(p_index_file, 0, SEEK_SET);
     // Read tag_num and root_tag
     fread(&(p_index_properties->tag_num), sizeof(p_index_properties->tag_num), 1, p_index_file);
     fread(&(p_index_properties->root_tag), sizeof(p_index_properties->root_tag), 1, p_index_file);
+
+    // Read index_id_type (save as uint32)
+    fread(&(temp_index_id_type), sizeof(uint32_t), 1, p_index_file);
+    assert(temp_index_id_type <= (uint32_t)INDEX_ID_TYPE_NUM);
+    p_index_properties->index_id_type = (INDEX_ID_TYPE_E)temp_index_id_type;
 
     // Read key_size
     fread(&(p_index_properties->key_size), sizeof(p_index_properties->key_size), 1, p_index_file);
@@ -331,12 +371,16 @@ void write_index_properties(INDEX_INFO_T *p_index_info)
 {
     FILE *p_index_file = p_index_info->index_file;
     INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+    uint32_t temp_index_id_type = (uint32_t)p_index_properties->index_id_type;
 
     fseek(p_index_file, 0, SEEK_SET);
 
     // Write tag_num & root_tag
     fwrite(&(p_index_properties->tag_num), sizeof(p_index_properties->tag_num), 1, p_index_file);
     fwrite(&(p_index_properties->root_tag), sizeof(p_index_properties->root_tag), 1, p_index_file);
+
+    // write index_id_type as uint32
+    fwrite(&(temp_index_id_type), sizeof(uint32_t), 1, p_index_file);
 
     // Write key_size
     fwrite(&(p_index_properties->key_size), sizeof(p_index_properties->key_size), 1, p_index_file);
@@ -346,32 +390,60 @@ void write_index_properties(INDEX_INFO_T *p_index_info)
 
 size_t get_index_properties_size(INDEX_PROPERTIES_T *p_index_properties)
 {
-    return sizeof(p_index_properties->tag_num) + sizeof(p_index_properties->root_tag) + sizeof(p_index_properties->key_size) + p_index_properties->key_size;
+    size_t index_properties_size = 0;
+    index_properties_size += sizeof(p_index_properties->tag_num) + sizeof(p_index_properties->root_tag) + sizeof(p_index_properties->index_id_type);
+    // key_size & key
+    index_properties_size += sizeof(p_index_properties->key_size) + p_index_properties->key_size;
+
+    return index_properties_size;
 }
 
-void index_node_init(INDEX_NODE_T *p_index_node, uint32_t tag)
+void free_index_properties_resources(INDEX_PROPERTIES_T *p_index_properties)
 {
-    memset(p_index_node, 0, sizeof(INDEX_NODE_T));
-    p_index_node->tag = tag;
+    if (p_index_properties->p_key)
+    {
+        free(p_index_properties->p_key);
+        p_index_properties->p_key = NULL;
+    }
 }
 
 void close_index_properties(INDEX_PROPERTIES_T *p_index_properties)
 {
     p_index_properties->root_tag = 0;
     p_index_properties->tag_num = 0;
-    free(p_index_properties->p_key);
-    p_index_properties->key_size = 0;   
+    p_index_properties->key_size = 0;
+    free_index_properties_resources(p_index_properties);
+}
+
+void index_node_init(INDEX_NODE_T *p_index_node, uint32_t tag)
+{
+    memset(p_index_node, 0, sizeof(INDEX_NODE_T));
+    for (uint32_t i = 0; i < INDEX_ORDER; i++)
+    {
+        index_element_init(&(p_index_node->elements[i]));
+    }
+
+    p_index_node->tag = tag;
 }
 
 void write_index_node(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node)
 {
     uint32_t node_tag = p_index_node->tag;
-    off_t node_offset = get_node_offset(p_index_info, node_tag);
+    off_t node_offset = get_node_offset(&(p_index_info->index_properties), node_tag);
     FILE *p_index_file = p_index_info->index_file;
 
     fseek(p_index_file, node_offset, SEEK_SET);
     // TODO: split
-    fwrite(p_index_node, sizeof(INDEX_NODE_T), 1, p_index_file);
+    // write static fields.
+    fwrite(&(p_index_node->tag), sizeof(p_index_node->tag), 1, p_index_file);
+    fwrite(&(p_index_node->level), sizeof(p_index_node->length), 1, p_index_file);
+    fwrite(&(p_index_node->length), sizeof(p_index_node->length), 1, p_index_file);
+    fwrite(&(p_index_node->parent_tag), sizeof(p_index_node->parent_tag), 1, p_index_file);
+    fwrite(&(p_index_node->next_tag), sizeof(p_index_node->next_tag), 1, p_index_file);
+    fwrite(p_index_node->child_tag, sizeof(p_index_node->child_tag[0]), INDEX_CHILD_TAG_ORDER, p_index_file);
+    // write dynamic fields
+    // TODO: write length
+    write_index_elements(p_index_info, node_tag, 0, INDEX_ORDER, p_index_node->elements);
 }
 
 // return sucessful or not
@@ -385,37 +457,57 @@ bool read_index_node(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_NODE_T *p_i
     }
 
     FILE *p_index_file = p_index_info->index_file;
-    off_t node_offset = get_node_offset(p_index_info, tag);
+    off_t node_offset = get_node_offset(&(p_index_info->index_properties), tag);
 
     fseek(p_index_file, node_offset, SEEK_SET);
-    fread(p_index_node, sizeof(INDEX_NODE_T), 1, p_index_file);
+    // read static fields
+    fread(&(p_index_node->tag), sizeof(p_index_node->tag), 1, p_index_file);
+    fread(&(p_index_node->level), sizeof(p_index_node->level), 1, p_index_file);
+    fread(&(p_index_node->length), sizeof(p_index_node->length), 1, p_index_file);
+    fread(&(p_index_node->parent_tag), sizeof(p_index_node->parent_tag), 1, p_index_file);
+    fread(&(p_index_node->next_tag), sizeof(p_index_node->next_tag), 1, p_index_file);
+    fread(p_index_node->child_tag, sizeof(p_index_node->child_tag[0]), INDEX_CHILD_TAG_ORDER, p_index_file);
+    // read dynamic fields
+    read_index_elements(p_index_info, tag, 0, INDEX_ORDER, p_index_node->elements);
 
     return true;
 }
 
-off_t get_node_offset(INDEX_INFO_T *p_index_info, uint32_t tag)
+off_t get_node_offset(INDEX_PROPERTIES_T *p_index_properties, uint32_t tag)
 {
-    size_t index_properties_size = 0;
-    size_t index_node_size = 0;
-    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
-
-    index_properties_size = get_index_properties_size(p_index_properties);
-    index_node_size = sizeof(INDEX_NODE_T);
+    size_t index_properties_size = get_index_properties_size(p_index_properties);
+    size_t index_element_size = index_id_type_handle_table[p_index_properties->index_id_type].size + INDEX_PAYLOAD_SIZE;
+    // tag + level + length + parent_tag + next_tag + child_tag[INDEX_CHILD_TAG_ORDER] + elements[INDEX_ORDER]
+    size_t index_node_size = (sizeof(uint32_t) * (INDEX_CHILD_TAG_ORDER + 5)) + (index_element_size * INDEX_ORDER);
 
     // tag is a 1-based number.
     return (index_properties_size + ((tag - 1) * index_node_size));
 }
 
-void setup_index_element(INDEX_ELEMENT_T *p_index_element, uint8_t *p_target, uint32_t target_size, uint8_t *p_payload, uint32_t payload_size)
+void free_index_node_resources(INDEX_NODE_T *p_index_node)
 {
-#if __INDEX_TEST__
-    p_index_element->index_id = *((HASH_VALUE_T *)p_target);
-#else
-    p_index_element->index_id = Hash(p_target, target_size);
-#endif
+    for (uint32_t i = 0; i < INDEX_ORDER; i++)
+    {
+        free_index_element_resources(&(p_index_node->elements[i]));
+    }
+}
 
+void index_element_init(INDEX_ELEMENT_T *p_index_element)
+{
+    p_index_element->p_index_id = NULL;
+    memset(p_index_element->index_payload, 0, INDEX_PAYLOAD_SIZE);
+}
+
+void setup_index_element(INDEX_ELEMENT_T *p_index_element, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_payload, uint32_t payload_size)
+{
+    uint32_t index_id_size = index_id_type_handle_table[index_id_type].size;
     payload_size = (payload_size > INDEX_PAYLOAD_SIZE) ? INDEX_PAYLOAD_SIZE : payload_size;
+    allocate_index_element_resources(p_index_element, index_id_size);
 
+    // index_id
+    memcpy(p_index_element->p_index_id, p_index_id, index_id_size);
+    // payload
+    // clear the existed data first.
     memset(p_index_element->index_payload, 0, INDEX_PAYLOAD_SIZE);
     if (payload_size > 0 && p_payload != NULL)
     {
@@ -423,9 +515,105 @@ void setup_index_element(INDEX_ELEMENT_T *p_index_element, uint8_t *p_target, ui
     }
 }
 
+/*
+** Write numbers of index_elements to file.
+** p_index_element array length should greater or equal to the write_length.
+*/
+void write_index_elements(INDEX_INFO_T *p_index_info, uint32_t tag, uint32_t index_element_position, uint32_t write_length, INDEX_ELEMENT_T *p_index_element)
+{
+    assert((index_element_position + write_length) <= INDEX_ORDER);
+
+    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+    FILE *p_index_file = p_index_info->index_file;
+    off_t index_element_offset = get_index_element_offset(p_index_properties, tag, index_element_position);
+    uint32_t index_id_size = index_id_type_handle_table[p_index_properties->index_id_type].size;
+
+    fseek(p_index_file, index_element_offset, SEEK_SET);
+    for (uint32_t i = 0; i < write_length; i++)
+    {
+        if (p_index_element[i].p_index_id != NULL)
+        {
+            fwrite(p_index_element[i].p_index_id, index_id_size, 1, p_index_file);
+        }
+        else
+        {
+            uint8_t zero_buffer[index_id_size];
+            memset(zero_buffer, 0, index_id_size);
+            fwrite(zero_buffer, index_id_size, 1, p_index_file);
+        }
+        fwrite(p_index_element[i].index_payload, INDEX_PAYLOAD_SIZE, 1, p_index_file);
+    }
+}
+
+/*
+** Read numbers of index_elements from file.
+** p_index_element array length should greater or equal to the read_length.
+*/
+void read_index_elements(INDEX_INFO_T *p_index_info, const uint32_t tag, const uint32_t index_element_position, const uint32_t read_length, INDEX_ELEMENT_T *p_index_element)
+{
+    assert((index_element_position + read_length) <= INDEX_ORDER);
+
+    INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
+    FILE *p_index_file = p_index_info->index_file;
+    off_t index_element_offset = get_index_element_offset(p_index_properties, tag, index_element_position);
+    uint32_t index_id_size = index_id_type_handle_table[p_index_properties->index_id_type].size;
+
+    fseek(p_index_file, index_element_offset, SEEK_SET);
+    for (uint32_t i = 0; i < read_length; i++)
+    {
+        allocate_index_element_resources(&(p_index_element[i]), index_id_size);
+        // read index_id
+        fread(p_index_element[i].p_index_id, index_id_size, 1, p_index_file);
+        // read index_paylolad
+        fread(p_index_element[i].index_payload, INDEX_PAYLOAD_SIZE, 1, p_index_file);
+    }
+}
+
+off_t get_index_element_offset(INDEX_PROPERTIES_T *p_index_properties, uint32_t tag, uint32_t index_element_position)
+{
+    uint32_t index_id_size = index_id_type_handle_table[p_index_properties->index_id_type].size;
+    off_t index_node_offset = get_node_offset(p_index_properties, tag);
+    // tag + level + length + parent_tag + next_tag + child_tag[INDEX_CHILD_TAG_ORDER]
+    size_t index_before_fields_size = sizeof(uint32_t) * (INDEX_CHILD_TAG_ORDER + 5);
+    size_t index_element_offset_of_node = index_element_position * (index_id_size + (INDEX_PAYLOAD_SIZE * sizeof(uint8_t)));
+
+    return index_node_offset + index_before_fields_size + index_element_offset_of_node;
+}
+
+void allocate_index_element_resources(INDEX_ELEMENT_T *p_index_element, uint32_t index_id_size)
+{
+    if (p_index_element->p_index_id)
+    {
+        free_index_element_resources(p_index_element);
+    }
+
+    p_index_element->p_index_id = calloc(1, index_id_size);
+}
+
+void free_index_element_resources(INDEX_ELEMENT_T *p_index_element)
+{
+    if (p_index_element->p_index_id != NULL)
+    {
+        free(p_index_element->p_index_id);
+        p_index_element->p_index_id = NULL;
+    }
+}
+
+// Deep copy index element
+void deep_copy_index_element(INDEX_ELEMENT_T *p_dest_index_element, INDEX_ELEMENT_T *p_src_index_element, INDEX_ID_TYPE_E index_id_type)
+{
+    uint32_t index_id_size = index_id_type_handle_table[index_id_type].size;
+
+    free_index_element_resources(p_dest_index_element);
+    allocate_index_element_resources(p_dest_index_element, index_id_type);
+
+    memcpy(p_dest_index_element->p_index_id, p_src_index_element->p_index_id, index_id_size);
+    memcpy(p_dest_index_element->index_payload, p_src_index_element->index_payload, INDEX_PAYLOAD_SIZE);
+}
+
 // Find the array position in the node where the new element should insert into.
 // Return the minimum element position where the value is equal or greater than the inputed value.
-uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element)
+uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element, INDEX_ID_TYPE_E index_id_type)
 {
     // binary search index_element position.
     // find equal or upper bound (ceiling child_tag in the node)
@@ -435,9 +623,9 @@ uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELE
     while (start < end)
     {
         uint32_t mid = start + ((end - start) / 2);
-        HASH_VALUE_COMPARE_RESULT cmp_result = Hash_Compare(p_index_element->index_id, p_index_node->elements[mid].index_id);
+        INDEX_ID_COMPARE_RESULT_E cmp_result = index_id_type_handle_table[index_id_type].p_compare_func(p_index_element->p_index_id, p_index_node->elements[mid].p_index_id);
 
-        if (cmp_result == HASH_VALUE_LEFT_GREATER)
+        if (cmp_result == INDEX_ID_COMPARE_LEFT_GREATER)
         {
             // grater than [mid]
             start = mid + 1;
@@ -454,13 +642,22 @@ uint32_t find_element_position_in_the_node(INDEX_NODE_T *p_index_node, INDEX_ELE
 
 void split_index_elements_into_two_index_node(INDEX_ELEMENT_T *p_index_element_buffer, uint32_t index_element_buffer_length, INDEX_NODE_T *p_index_node_current, INDEX_NODE_T *p_index_node_sibling)
 {
+    assert(index_element_buffer_length <= (2 * INDEX_ORDER));
+
     uint32_t start_position, copy_length;
     bool is_leaf_node = (p_index_node_current->child_tag[0] == 0) ? true : false;
 
     // Copy first half of index elements into current node.
     start_position = 0;
     copy_length = index_element_buffer_length / 2;
+    // p_index_id: shallow copy
     memcpy(p_index_node_current->elements, p_index_element_buffer, sizeof(INDEX_ELEMENT_T) * copy_length);
+    for(uint32_t i = copy_length; i < INDEX_ORDER; i++)
+    {
+        p_index_node_current->elements[i].p_index_id = NULL;
+        memset(p_index_node_current->elements[i].index_payload, 0, INDEX_PAYLOAD_SIZE);
+    }
+    // TODO: Set the unused index elements into default value.
     p_index_node_current->length = copy_length;
 
     // Copy second half of index elements into the sibling node.
@@ -476,7 +673,14 @@ void split_index_elements_into_two_index_node(INDEX_ELEMENT_T *p_index_element_b
         start_position = copy_length + 1;
         copy_length = index_element_buffer_length - copy_length - 1;
     }
+    // p_index_id: shallow copy
     memcpy(p_index_node_sibling->elements, &(p_index_element_buffer[start_position]), sizeof(INDEX_ELEMENT_T) * copy_length);
+    for(uint32_t i = copy_length; i < INDEX_ORDER; i++)
+    {
+        p_index_node_sibling->elements[i].p_index_id = NULL;
+        memset(p_index_node_sibling->elements[i].index_payload, 0, INDEX_PAYLOAD_SIZE);
+    }
+    // Set unused elements into default value.
     p_index_node_sibling->length = copy_length;
 }
 
@@ -493,15 +697,18 @@ void split_child_tags_into_two_index_node(INDEX_INFO_T *p_index_info, uint32_t *
     // update the parent tag of the second half child nodes to sibling node tag.
     for (uint32_t i = 0; i < second_half_length; i++)
     {
+        index_node_init(&second_half_child_index_node, p_index_node_sibling->child_tag[i]);
         read_index_node(p_index_info, p_index_node_sibling->child_tag[i], &second_half_child_index_node);
         second_half_child_index_node.parent_tag = p_index_node_sibling->tag;
         write_index_node(p_index_info, &second_half_child_index_node);
+        free_index_node_resources(&second_half_child_index_node);
     }
 }
 
 void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_index_element, uint32_t new_child_tag)
 {
-    uint32_t position = find_element_position_in_the_node(p_index_node, p_index_element);
+    INDEX_ID_TYPE_E index_id_type = p_index_info->index_properties.index_id_type;
+    uint32_t position = find_element_position_in_the_node(p_index_node, p_index_element, index_id_type);
     uint32_t tag_position = position + 1;
     INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
 
@@ -515,14 +722,27 @@ void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_in
         uint32_t mid_position = (INDEX_ORDER + 1) / 2;
         bool is_leaf_node = (p_index_node->child_tag[0] == 0) ? true : false;
 
+        // init buffers
+        for (uint32_t i = 0; i < INDEX_ORDER + 1; i++)
+        {
+            index_element_init(&(index_elements_buffer[i]));
+        }
+        for (uint32_t i = 0; i < INDEX_CHILD_TAG_ORDER + 1; i++)
+        {
+            child_tags_buffer[i] = 0;
+        }
+
         // insert the current node and the new element into buffer by order.
         if (position > 0)
         {
+            // p_index_id: shallow copy
             memcpy(index_elements_buffer, &(p_index_node->elements[0]), sizeof(INDEX_ELEMENT_T) * position);
         }
-        memcpy(&(index_elements_buffer[position]), p_index_element, sizeof(INDEX_ELEMENT_T));
+        // deep copy the inserted element.
+        deep_copy_index_element(&(index_elements_buffer[position]), p_index_element, p_index_properties->index_id_type);
         if (position < INDEX_ORDER)
         {
+            // p_index_id: shallow copy
             memcpy(&(index_elements_buffer[position + 1]), &(p_index_node->elements[position]), sizeof(INDEX_ELEMENT_T) * (INDEX_ORDER - position));
         }
 
@@ -561,6 +781,7 @@ void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_in
         }
         else
         {
+            index_node_init(&parent_node, p_index_node->parent_tag);
             read_index_node(p_index_info, p_index_node->parent_tag, &parent_node);
         }
 
@@ -568,6 +789,7 @@ void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_in
         // If the current node is a leaf node, copy the [mid] element to new sibling node to keep it in the leaf.
         // If current node is not a leaf node, we don't have to keep it in any node in the current node level.
         split_index_elements_into_two_index_node(index_elements_buffer, INDEX_ORDER + 1, p_index_node, &new_sibling_node);
+        // Because all the child tag in the leaef node is 0, no need to set non-0 value to them.
         if (is_leaf_node == false)
         {
             split_child_tags_into_two_index_node(p_index_info, child_tags_buffer, INDEX_CHILD_TAG_ORDER + 1, p_index_node, &new_sibling_node);
@@ -579,11 +801,22 @@ void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_in
         // write current node into file.
         write_index_node(p_index_info, p_index_node);
 
+        // TODO: update index properties only when close index.
         write_index_properties(p_index_info);
 
         // Insert the [mid] element to the parent node.
         insert_index_element_handler(p_index_info, &parent_node, &(index_elements_buffer[mid_position]), new_sibling_node.tag);
         // the above function will write parent node into file.
+
+        // free resources of sibling, parnet node, and [mid] element if current node is not a leaf node.
+        free_index_node_resources(&new_sibling_node);
+        free_index_node_resources(&parent_node);
+        // If current node is not a leaf node, the [mid] element would not existed in the current node or the sibling node.
+        // And the resource would not be freed.
+        if (is_leaf_node == false)
+        {
+            free_index_element_resources(&(index_elements_buffer[mid_position]));
+        }
     }
     else
     {
@@ -591,13 +824,20 @@ void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_in
         // insertion sort
         for (uint32_t i = p_index_node->length; i > position; i--)
         {
+            void *temp_ptr = NULL;
+
             // move the elements in the node which greater than the inserted element to the next position in the array.
-            memcpy(&(p_index_node->elements[i]), &(p_index_node->elements[i - 1]), sizeof(INDEX_ELEMENT_T));
+            // swap dynamic resources (malloc): p_index_id.
+            temp_ptr = p_index_node->elements[i].p_index_id;
+            p_index_node->elements[i].p_index_id = p_index_node->elements[i - 1].p_index_id;
+            p_index_node->elements[i - 1].p_index_id = temp_ptr;
+            // copy static resources: index_payload.
+            memcpy(&(p_index_node->elements[i].index_payload), &(p_index_node->elements[i - 1].index_payload), sizeof(INDEX_PAYLOAD_SIZE));
             // move child_tags
             p_index_node->child_tag[i + 1] = p_index_node->child_tag[i];
         }
-
-        memcpy(&(p_index_node->elements[position]), p_index_element, sizeof(INDEX_ELEMENT_T));
+        // deep copy inserted index element
+        deep_copy_index_element(&(p_index_node->elements[position]), p_index_element, p_index_properties->index_id_type);
         p_index_node->child_tag[tag_position] = new_child_tag;
         p_index_node->length++;
 
@@ -609,6 +849,7 @@ void insert_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_in
 void insert_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_index_element)
 {
     INDEX_NODE_T index_node;
+    index_node_init(&index_node, tag);
 
     if (read_index_node(p_index_info, tag, &index_node) == false)
     {
@@ -619,20 +860,25 @@ void insert_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMEN
     if (index_node.child_tag[0] != 0)
     {
         // Current node is not a leaf node.
-        // find the insert position (and also the child_tag position). Position is in the range of [0, index_node.length].
-        uint32_t position = find_element_position_in_the_node(&index_node, p_index_element);
-        return insert_index_element(p_index_info, index_node.child_tag[position], p_index_element);
+        // find the insert position (and also the child_tag position).
+        // Position is in the range of [0, index_node.length].
+        INDEX_ID_TYPE_E index_id_type = p_index_info->index_properties.index_id_type;
+        uint32_t position = find_element_position_in_the_node(&index_node, p_index_element, index_id_type);
+        insert_index_element(p_index_info, index_node.child_tag[position], p_index_element);
     }
     else
     {
         // Current node is a leaf node.
-        return insert_index_element_handler(p_index_info, &index_node, p_index_element, 0);
+        insert_index_element_handler(p_index_info, &index_node, p_index_element, 0);
     }
+
+    free_index_node_resources(&index_node);
 }
 
-uint8_t *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length)
+void *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length)
 {
     INDEX_NODE_T index_node;
+    index_node_init(&index_node, tag);
 
     if (read_index_node(p_index_info, tag, &index_node) == false)
     {
@@ -643,7 +889,8 @@ uint8_t *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_EL
     if (index_node.child_tag[0] != 0)
     {
         // non-leaf
-        uint32_t position = find_element_position_in_the_node(&index_node, p_target_index_element);
+        INDEX_ID_TYPE_E index_id_type = p_index_info->index_properties.index_id_type;
+        uint32_t position = find_element_position_in_the_node(&index_node, p_target_index_element, index_id_type);
         return search_index_element(p_index_info, index_node.child_tag[position], p_target_index_element, result_length);
     }
     else
@@ -651,18 +898,21 @@ uint8_t *search_index_element(INDEX_INFO_T *p_index_info, uint32_t tag, INDEX_EL
         // leaf-node
         return search_index_element_handler(p_index_info, &index_node, p_target_index_element, result_length);
     }
+
+    free_index_node_resources(&index_node);
 }
 
 uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *p_index_node, INDEX_ELEMENT_T *p_target_index_element, uint32_t *result_length)
 {
     uint8_t *p_search_result = NULL;
-    uint32_t position = find_element_position_in_the_node(p_index_node, p_target_index_element);
+    INDEX_ID_TYPE_E index_id_type = p_index_info->index_properties.index_id_type;
+    uint32_t position = find_element_position_in_the_node(p_index_node, p_target_index_element, index_id_type);
     uint32_t compare_equal_length = 0, i = 0, match_end_position = 0;
     bool only_current_node_result = true;
 
     for (i = position; i < p_index_node->length; i++)
     {
-        if (Hash_Compare(p_target_index_element->index_id, p_index_node->elements[i].index_id) == HASH_VALUE_EQUAL)
+        if (index_id_type_handle_table[index_id_type].p_compare_func(p_target_index_element->p_index_id, p_index_node->elements[i].p_index_id) == INDEX_ID_COMPARE_EQUAL)
         {
             match_end_position = i;
             compare_equal_length++;
@@ -678,6 +928,8 @@ uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *
         // The target node may also existed in the next node, search next node.
         INDEX_NODE_T next_index_node;
         uint8_t *next_index_node_search_result = NULL;
+
+        index_node_init(&next_index_node, p_index_node->next_tag);
 
         if (read_index_node(p_index_info, p_index_node->next_tag, &next_index_node) == true)
         {
@@ -697,11 +949,14 @@ uint8_t *search_index_element_handler(INDEX_INFO_T *p_index_info, INDEX_NODE_T *
             // read next node error
             only_current_node_result = true;
         }
+
+        free_index_node_resources(&next_index_node);
     }
 
     if (only_current_node_result == true)
     {
-        // The right most element is not equal to the target. No need to search next node.
+        // The right most element is not equal to the target.
+        // No need to search next node.
         // Or next node doesn't exist.
         // Or next node read error.
         *result_length = 0;
