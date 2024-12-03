@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include "hash.h"
 
 #ifndef __INDEX_TEST__
@@ -36,8 +37,9 @@ typedef enum
 } INDEX_ID_TYPE_E;
 
 void Index_Api_Init(char *p_index_directory_path);
+bool Index_Api_Index_Key_Exists(char *p_index_key);
 void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_index_payload, uint32_t payload_size);
-void *Index_Api_Search(char *p_index_key, void *p_target, INDEX_ID_TYPE_E index_id_type, uint32_t *result_length);
+void *Index_Api_Search(char *p_index_key, void *p_target_index_id, INDEX_ID_TYPE_E index_id_type, uint32_t *p_result_length);
 void Index_Api_Close();
 
 #endif // __INDEX_H__

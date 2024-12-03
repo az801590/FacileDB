@@ -61,7 +61,7 @@ typedef struct
 
 // Static Varialbes
 static INDEX_INFO_T index_info_instance;
-static char index_directory_path[INDEX_FILE_PATH_BUFFER_LENGTH];
+static char index_directory_path[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
 // clang-format off
 static INDEX_ID_TYPE_HANDLE_TBL_T index_id_type_handle_table[INDEX_ID_TYPE_NUM + 1] = {
 #undef INDEX_ID_TYPE_CONFIG
@@ -82,6 +82,7 @@ INDEX_INFO_T *request_empty_index_info_instance();
 
 INDEX_INFO_T *query_index_info_loaded(uint8_t *p_index_key, uint32_t index_key_size, INDEX_ID_TYPE_E index_id_type);
 INDEX_INFO_T *load_index_info(char *p_key, INDEX_ID_TYPE_E index_id_type);
+bool is_index_key_file_exists(char *p_index_key);
 void get_index_file_path_by_index_key(char *p_index_file_path, char *p_index_key);
 
 void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t key_size, INDEX_ID_TYPE_E index_id_type);
@@ -130,6 +131,17 @@ void Index_Api_Close()
     }
 }
 
+bool Index_Api_Index_Key_Exists(char *p_index_key)
+{
+    // TODO: improve the Init beforehand checker
+    if(strlen(index_directory_path) == 0)
+    {
+        return false;
+    }
+
+    return is_index_key_file_exists(p_index_key);
+}
+
 void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_index_payload, uint32_t payload_size)
 {
     INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key), index_id_type);
@@ -157,12 +169,19 @@ void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE
 
 // return value: result array
 // result_length: integer, number of results in result array
-void *Index_Api_Search(char *p_index_key, void *p_target, INDEX_ID_TYPE_E index_id_type, uint32_t *result_length)
+void *Index_Api_Search(char *p_index_key, void *p_target_index_id, INDEX_ID_TYPE_E index_id_type, uint32_t *p_result_length)
 {
     INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key), index_id_type);
     uint32_t root_tag = 0;
     INDEX_ELEMENT_T target_index_element;
     void *result = NULL;
+
+    // Check if index key exists or not.
+    if(!(is_index_key_file_exists(p_index_key)))
+    {
+        *p_result_length = 0;
+        return NULL;
+    }
 
     index_element_init(&target_index_element);
 
@@ -172,8 +191,8 @@ void *Index_Api_Search(char *p_index_key, void *p_target, INDEX_ID_TYPE_E index_
     }
     root_tag = p_index_info->index_properties.root_tag;
 
-    setup_index_element(&target_index_element, p_target, index_id_type, NULL, 0);
-    result = search_index_element(p_index_info, root_tag, &target_index_element, result_length);
+    setup_index_element(&target_index_element, p_target_index_id, index_id_type, NULL, 0);
+    result = search_index_element(p_index_info, root_tag, &target_index_element, p_result_length);
     free_index_element_resources(&target_index_element);
 
     return result;
@@ -190,6 +209,7 @@ bool set_index_directory_path(char *p_index_directory_path)
     // add '/' at the end of the path if the last char is not '/'
     if (index_directory_path[strlen(index_directory_path) - 1] != '/')
     {
+        // TODO: add to the end instead of replace the last char.
         index_directory_path[strlen(index_directory_path) - 1] = '/';
     }
 
@@ -295,6 +315,23 @@ INDEX_INFO_T *load_index_info(char *p_key, INDEX_ID_TYPE_E index_id_type)
 
     index_properties_init(p_index_info, (uint8_t *)p_key, strlen(p_key), index_id_type);
     return p_index_info;
+}
+
+bool is_index_key_file_exists(char *p_index_key)
+{
+    char index_file_path[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
+    get_index_file_path_by_index_key(index_file_path, p_index_key);
+
+    if (access(index_file_path, F_OK) == 0)
+    {
+        // Index file exists
+        return true;
+    }
+    else
+    {
+        // Index file doesn't exist.
+        return false;
+    }
 }
 
 void get_index_file_path_by_index_key(char *p_index_file_path, char *p_index_key)

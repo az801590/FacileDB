@@ -369,6 +369,28 @@ void test_index_insert_case11()
     test_end(case_name);
 }
 
+void test_index_key_exists()
+{
+    char case_name[] = "test_index_key_exists";
+    test_start(case_name);
+
+    char p_index_key[] = "test_index_key_exists.index";
+    char p_fake_index_key[] = "test_index_key_exists_fake.index";
+    uint32_t target = 1;
+    char payload[100] = "aaa";
+
+    Index_Api_Init(test_index_directory);
+    Index_Api_Insert_Element(p_index_key, &target, INDEX_ID_TYPE_UINT32, &payload, strlen(payload));
+
+    // check
+    assert(Index_Api_Index_Key_Exists(p_index_key) == true);
+    assert(Index_Api_Index_Key_Exists(p_fake_index_key) == false);
+
+    Index_Api_Close();
+
+    test_end(case_name);
+}
+
 void test_index_search_case1()
 {
     char case_name[] = "test_index_search_case1";
@@ -478,6 +500,7 @@ int main()
     test_index_close();
     test_index_insert_case1();
     test_index_insert_case11();
+    test_index_key_exists();
     test_index_search_case1();
     test_index_search_case11();
     return 0;
