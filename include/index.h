@@ -15,12 +15,12 @@
 #endif
 
 #ifndef INDEX_PAYLOAD_SIZE
-// ((INDEX_PAYLOAD_SIZE + sizeof(HASH_VALUE_T)) * INDEX_ORDER) should be divisible by 4.
+// ((INDEX_PAYLOAD_SIZE + sizeof(index_id)) * INDEX_ORDER) should be divisible by 4.
 #define INDEX_PAYLOAD_SIZE (16)
 #endif
 
 #ifndef INDEX_FILE_PATH_BUFFER_LENGTH
-#define INDEX_FILE_PATH_BUFFER_LENGTH (128)
+#define INDEX_FILE_PATH_BUFFER_LENGTH (256)
 #endif
 
 #define INDEX_CHILD_TAG_ORDER (INDEX_ORDER + 1)
@@ -39,7 +39,7 @@ typedef enum
 void Index_Api_Init(char *p_index_directory_path);
 bool Index_Api_Index_Key_Exists(char *p_index_key);
 void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_index_payload, uint32_t payload_size);
-void *Index_Api_Search(char *p_index_key, void *p_target_index_id, INDEX_ID_TYPE_E index_id_type, uint32_t *p_result_length);
+void *Index_Api_Search_Equal(char *p_index_key, void *p_target_index_id, INDEX_ID_TYPE_E index_id_type, uint32_t *p_result_length);
 void Index_Api_Close();
 
 #endif // __INDEX_H__

@@ -37,11 +37,15 @@ typedef struct
     // tag_num == max(tag)
     uint32_t tag_num;
     uint32_t root_tag;
-    INDEX_ID_TYPE_E index_id_type; // write and read as uint32
+    union
+    {
+        INDEX_ID_TYPE_E index_id_type;
+        uint32_t index_id_type_32;  // write and read as uint32
+    };
     // HASH_VALUE_T integrity;
 
     uint32_t key_size; // bytes
-    uint8_t *p_key;
+    uint8_t *p_key; // size = key_size
 } INDEX_PROPERTIES_T;
 
 typedef struct
@@ -169,7 +173,7 @@ void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE
 
 // return value: result array
 // result_length: integer, number of results in result array
-void *Index_Api_Search(char *p_index_key, void *p_target_index_id, INDEX_ID_TYPE_E index_id_type, uint32_t *p_result_length)
+void *Index_Api_Search_Equal(char *p_index_key, void *p_target_index_id, INDEX_ID_TYPE_E index_id_type, uint32_t *p_result_length)
 {
     INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key), index_id_type);
     uint32_t root_tag = 0;
@@ -385,7 +389,6 @@ void read_index_properties(INDEX_INFO_T *p_index_info)
 {
     FILE *p_index_file = p_index_info->index_file;
     INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
-    uint32_t temp_index_id_type;
 
     fseek(p_index_file, 0, SEEK_SET);
     // Read tag_num and root_tag
@@ -393,9 +396,8 @@ void read_index_properties(INDEX_INFO_T *p_index_info)
     fread(&(p_index_properties->root_tag), sizeof(p_index_properties->root_tag), 1, p_index_file);
 
     // Read index_id_type (save as uint32)
-    fread(&(temp_index_id_type), sizeof(uint32_t), 1, p_index_file);
-    assert(temp_index_id_type <= (uint32_t)INDEX_ID_TYPE_NUM);
-    p_index_properties->index_id_type = (INDEX_ID_TYPE_E)temp_index_id_type;
+    fread(&(p_index_properties->index_id_type_32), sizeof(p_index_properties->index_id_type_32), 1, p_index_file);
+    assert(p_index_properties->index_id_type <= INDEX_ID_TYPE_NUM);
 
     // Read key_size
     fread(&(p_index_properties->key_size), sizeof(p_index_properties->key_size), 1, p_index_file);
@@ -408,7 +410,6 @@ void write_index_properties(INDEX_INFO_T *p_index_info)
 {
     FILE *p_index_file = p_index_info->index_file;
     INDEX_PROPERTIES_T *p_index_properties = &(p_index_info->index_properties);
-    uint32_t temp_index_id_type = (uint32_t)p_index_properties->index_id_type;
 
     fseek(p_index_file, 0, SEEK_SET);
 
@@ -417,7 +418,7 @@ void write_index_properties(INDEX_INFO_T *p_index_info)
     fwrite(&(p_index_properties->root_tag), sizeof(p_index_properties->root_tag), 1, p_index_file);
 
     // write index_id_type as uint32
-    fwrite(&(temp_index_id_type), sizeof(uint32_t), 1, p_index_file);
+    fwrite(&(p_index_properties->index_id_type_32), sizeof(p_index_properties->index_id_type_32), 1, p_index_file);
 
     // Write key_size
     fwrite(&(p_index_properties->key_size), sizeof(p_index_properties->key_size), 1, p_index_file);

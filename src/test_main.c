@@ -407,7 +407,7 @@ void test_index_search_case1()
     // Operations
     Index_Api_Init(test_index_directory);
     Index_Api_Insert_Element(p_index_key, &target, index_id_type, payload, strlen(payload) * sizeof(char));
-    result = Index_Api_Search(p_index_key, &target, index_id_type, &result_length);
+    result = Index_Api_Search_Equal(p_index_key, &target, index_id_type, &result_length);
     Index_Api_Close();
 
     // check
@@ -443,12 +443,12 @@ void test_index_search_case11()
         Index_Api_Insert_Element(p_index_key, &(target[i]), index_id_type, payload[i], strlen(payload[i]) * sizeof(char));
     }
 
-    result[0] = Index_Api_Search(p_index_key, &(target[0]), index_id_type, &(reuslt_length[0]));
-    result[1] = Index_Api_Search(p_index_key, &(target[1]), index_id_type, &(reuslt_length[1]));
-    result[2] = Index_Api_Search(p_index_key, &(target[3]), index_id_type, &(reuslt_length[2]));
-    result[3] = Index_Api_Search(p_index_key, &(target[4]), index_id_type, &(reuslt_length[3]));
-    result[4] = Index_Api_Search(p_index_key, &(target[5]), index_id_type, &(reuslt_length[4]));
-    result[5] = Index_Api_Search(p_index_key, &(target[9]), index_id_type, &(reuslt_length[5]));
+    result[0] = Index_Api_Search_Equal(p_index_key, &(target[0]), index_id_type, &(reuslt_length[0]));
+    result[1] = Index_Api_Search_Equal(p_index_key, &(target[1]), index_id_type, &(reuslt_length[1]));
+    result[2] = Index_Api_Search_Equal(p_index_key, &(target[3]), index_id_type, &(reuslt_length[2]));
+    result[3] = Index_Api_Search_Equal(p_index_key, &(target[4]), index_id_type, &(reuslt_length[3]));
+    result[4] = Index_Api_Search_Equal(p_index_key, &(target[5]), index_id_type, &(reuslt_length[4]));
+    result[5] = Index_Api_Search_Equal(p_index_key, &(target[9]), index_id_type, &(reuslt_length[5]));
 
     Index_Api_Close();
 
