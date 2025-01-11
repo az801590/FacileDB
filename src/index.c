@@ -1,8 +1,9 @@
-#include <assert.h>
-#include <stdbool.h>
+#include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -67,12 +68,13 @@ typedef struct
 static INDEX_INFO_T index_info_instance;
 static char index_directory_path[INDEX_FILE_PATH_BUFFER_LENGTH] = {0};
 // clang-format off
-static INDEX_ID_TYPE_HANDLE_TBL_T index_id_type_handle_table[INDEX_ID_TYPE_NUM + 1] = {
+static INDEX_ID_TYPE_HANDLE_TBL_T index_id_type_handle_table[INDEX_ID_TYPE_NUM] = {
+#ifdef INDEX_ID_TYPE_CONFIG
 #undef INDEX_ID_TYPE_CONFIG
+#endif
 #define INDEX_ID_TYPE_CONFIG(index_id_type, index_id_size, index_id_compare_function) {.size = index_id_size, .p_compare_func = index_id_compare_function},
 #include "index_id_type_table.h"
 #undef INDEX_ID_TYPE_CONFIG
-    {.size = 0, .p_compare_func = NULL}
 };
 // clang-format on
 // End of Static Variables
@@ -93,6 +95,7 @@ void index_properties_init(INDEX_INFO_T *p_index_info, uint8_t *p_key, uint32_t 
 void read_index_properties(INDEX_INFO_T *p_index_info);
 void write_index_properties(INDEX_INFO_T *p_index_info);
 size_t get_index_properties_size(INDEX_PROPERTIES_T *p_index_properties);
+void free_index_properties_resources(INDEX_PROPERTIES_T *p_index_properties);
 void close_index_properties(INDEX_PROPERTIES_T *p_index_properties);
 
 void index_node_init(INDEX_NODE_T *p_index_node, uint32_t tag);
@@ -135,7 +138,7 @@ void Index_Api_Close()
     }
 }
 
-bool Index_Api_Index_Key_Exists(char *p_index_key)
+bool Index_Api_Index_Key_Exist(char *p_index_key)
 {
     // TODO: improve the Init beforehand checker
     if(strlen(index_directory_path) == 0)
@@ -148,12 +151,12 @@ bool Index_Api_Index_Key_Exists(char *p_index_key)
 
 void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_index_payload, uint32_t payload_size)
 {
-    INDEX_INFO_T *p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key), index_id_type);
-    uint32_t root_tag = 0;
+    INDEX_INFO_T *p_index_info = NULL;
     INDEX_ELEMENT_T index_element;
     
     index_element_init(&index_element);
 
+    p_index_info = query_index_info_loaded((uint8_t *)p_index_key, strlen(p_index_key), index_id_type);
     if (p_index_info == NULL)
     {
         p_index_info = load_index_info(p_index_key, index_id_type);
@@ -163,10 +166,9 @@ void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE
         // index_id_type doesn't match.
         return;
     }
-    root_tag = p_index_info->index_properties.root_tag;
 
     setup_index_element(&index_element, p_index_id, index_id_type, p_index_payload, payload_size);
-    insert_index_element(p_index_info, root_tag, &index_element);
+    insert_index_element(p_index_info, p_index_info->index_properties.root_tag, &index_element);
 
     free_index_element_resources(&index_element);
 }

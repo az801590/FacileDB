@@ -86,22 +86,6 @@ void print_index_node(INDEX_NODE_T *p_index_node, INDEX_ID_TYPE_E index_id_type)
 
 char test_index_directory[] = "./bin/test_index_files/";
 
-void test_hash()
-{
-    char case_name[] = "hash";
-
-    test_start(case_name);
-
-    uint8_t s[] = "dog";
-    HASH_VALUE_T result = Hash(s, strlen((char *)s));
-    HASH_VALUE_T expected = 0x0b886aff;
-
-    // printf("0x%llx\n", result);
-    assert(Hash_Compare(result, expected) == HASH_VALUE_COMPARE_EQUAL);
-
-    test_end(case_name);
-}
-
 void test_index_init()
 {
     char case_name[] = "test_index_init";
@@ -383,8 +367,8 @@ void test_index_key_exists()
     Index_Api_Insert_Element(p_index_key, &target, INDEX_ID_TYPE_UINT32, &payload, strlen(payload));
 
     // check
-    assert(Index_Api_Index_Key_Exists(p_index_key) == true);
-    assert(Index_Api_Index_Key_Exists(p_fake_index_key) == false);
+    assert(Index_Api_Index_Key_Exist(p_index_key) == true);
+    assert(Index_Api_Index_Key_Exist(p_fake_index_key) == false);
 
     Index_Api_Close();
 
@@ -493,9 +477,6 @@ void test_index_search_case11()
 
 int main()
 {
-    // hash
-    // test_hash();
-    // index
     test_index_init();
     test_index_close();
     test_index_insert_case1();
@@ -503,5 +484,6 @@ int main()
     test_index_key_exists();
     test_index_search_case1();
     test_index_search_case11();
+
     return 0;
 }

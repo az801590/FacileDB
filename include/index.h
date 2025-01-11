@@ -1,10 +1,8 @@
 #ifndef __INDEX_H__
 #define __INDEX_H__
 
-#include <stdlib.h>
-#include <stdio.h>
+#include <stdint.h>
 #include <stdbool.h>
-#include "hash.h"
 
 #ifndef __INDEX_TEST__
 #define __INDEX_TEST__ (0)
@@ -28,16 +26,17 @@
 
 typedef enum
 {
+#ifdef INDEX_ID_TYPE_CONFIG
 #undef INDEX_ID_TYPE_CONFIG
-#define INDEX_ID_TYPE_CONFIG(index_id_type, index_id_size, compare_function) index_id_type,
+#endif
+#define INDEX_ID_TYPE_CONFIG(index_id_type, index_id_size, index_id_compare_function) index_id_type,
 #include "index_id_type_table.h"
 #undef INDEX_ID_TYPE_CONFIG
-
     INDEX_ID_TYPE_NUM
 } INDEX_ID_TYPE_E;
 
 void Index_Api_Init(char *p_index_directory_path);
-bool Index_Api_Index_Key_Exists(char *p_index_key);
+bool Index_Api_Index_Key_Exist(char *p_index_key);
 void Index_Api_Insert_Element(char *p_index_key, void *p_index_id, INDEX_ID_TYPE_E index_id_type, void *p_index_payload, uint32_t payload_size);
 void *Index_Api_Search_Equal(char *p_index_key, void *p_target_index_id, INDEX_ID_TYPE_E index_id_type, uint32_t *p_result_length);
 void Index_Api_Close();
