@@ -294,6 +294,7 @@ void test_faciledb_insert_case2()
     // clang-format off
     DB_BLOCK_T expected_db_blocks[2] = {
         {
+            // [0]
             .block_tag = 1,
             .prev_block_tag = 0,
             .next_block_tag = 0,
@@ -302,6 +303,7 @@ void test_faciledb_insert_case2()
             .record_properties_num = 1
         },
         {
+            // [1]
             .block_tag = 2,
             .prev_block_tag = 0,
             .next_block_tag = 0,
@@ -353,30 +355,29 @@ void test_faciledb_insert_case2()
             .db_record_properties_offset = get_db_block_offset(&(p_db_set_info->db_set_properties), 2) + (((uint64_t)&(expected_db_blocks[1].block_data)) - ((uint64_t)&(expected_db_blocks[1]))) + get_db_record_properties_size() + data2.p_data_records[0].key_size + data2.p_data_records[0].value_size
         }
     };
-
-    check_faciledb_records(expected_db_records, 3, expected_db_records, 3);
     // clang-format on
 
     // check db blocks
-    // for (uint32_t i = 0; i < 2; i++)
-    // {
-    //     db_block_init(&db_block);
-    //     read_db_block(p_db_set_info, i, &db_block);
-    //     check_faciledb_block(&db_block, &(expected_db_blocks[i]));
+    for (uint32_t i = 0; i < 2; i++)
+    {
+        db_block_init(&db_block);
+        read_db_block(p_db_set_info, i + 1, &db_block);
+        check_faciledb_block(&db_block, &(expected_db_blocks[i]));
 
-    //     // check the db records
-    //     uint32_t record_num = 0;
-    //     DB_RECORD_INFO_T *p_db_records_info = extract_db_records_from_db_blocks(1, p_db_set_info, &record_num);
+        // check the db records
+        uint32_t record_num = 0;
+        uint32_t expected_record_num = (i == 0) ? (1) : (2); // 1 record in block1 and 2 records in block2.
+        DB_RECORD_INFO_T *p_db_records_info = extract_db_records_from_db_blocks(expected_db_blocks[i].block_tag, p_db_set_info, &record_num);
 
-    //     check_faciledb_records(p_db_records_info, record_num, &expected_db_record, 1);
+        check_faciledb_records(p_db_records_info, record_num, &(expected_db_records[i]), expected_record_num);
 
-    //     for (uint32_t i = 0; i < record_num; i++)
-    //     {
-    //         free_db_record_info_resources(&(p_db_records_info[i]));
-    //     }
+        for (uint32_t i = 0; i < record_num; i++)
+        {
+            free_db_record_info_resources(&(p_db_records_info[i]));
+        }
+    }
 
-    //     FacileDB_Api_Close();
-    // }
+    FacileDB_Api_Close();
 
     test_end(case_name);
 }
