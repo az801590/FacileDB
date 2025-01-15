@@ -2,13 +2,14 @@
 #include <assert.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 #define __FACILEDB_TEST__
 #define __PRINT_DETAILS__
 #define DB_SET_INFO_INSTANCE_NUM (1)
 #define DB_BLOCK_DATA_SIZE (32 * 4 + 8 + 16) // 152 bytes
 
-#include "facile_db.c"
+#include "faciledb.c"
 
 void test_start(char *case_name)
 {
@@ -59,6 +60,8 @@ void check_faciledb_block(DB_BLOCK_T *p_db_block_1, DB_BLOCK_T *p_db_block_2)
     printf("block_tag: %" PRIu64 "\n", p_db_block_print->block_tag);
     printf("prev_block_tag: %" PRIu64 "\n", p_db_block_print->prev_block_tag);
     printf("next_block_tag: %" PRIu64 "\n", p_db_block_print->next_block_tag);
+    printf("created_time: %" PRIu64 "\n", p_db_block_print->created_time);
+    printf("modified_time: %" PRIu64 "\n", p_db_block_print->modified_time);
     printf("deleted: %" PRIu32 "\n", p_db_block_print->deleted);
     printf("valid_record_num: %" PRIu32 "\n", p_db_block_print->valid_record_num);
     printf("record_properties_number: %" PRIu32 "\n", p_db_block_print->record_properties_num);
@@ -67,7 +70,7 @@ void check_faciledb_block(DB_BLOCK_T *p_db_block_1, DB_BLOCK_T *p_db_block_2)
 
 void check_faciledb_records(DB_RECORD_INFO_T *p_db_record_info_1, uint32_t db_record_length_1, DB_RECORD_INFO_T *p_db_record_info_2, uint32_t db_record_length_2)
 {
-    // assert(db_record_length_1 == db_record_length_2);
+    assert(db_record_length_1 == db_record_length_2);
     for (uint32_t i = 0; i < db_record_length_1; i++)
     {
         assert(p_db_record_info_1[i].db_record_properties_offset == p_db_record_info_2[i].db_record_properties_offset);
@@ -84,7 +87,7 @@ void check_faciledb_records(DB_RECORD_INFO_T *p_db_record_info_1, uint32_t db_re
         DB_RECORD_INFO_T *p_db_record_info_print = &(p_db_record_info_1[i]);
         char key_string[p_db_record_info_print->db_record_properties.key_size + 1];
 
-        printf("--Index: %d--\n", i);
+        printf("\t--Record: %d--\n", i);
         printf("record_properties_offset: %llu\n", p_db_record_info_print->db_record_properties_offset);
         printf("deleted: %" PRIu32 "\n", p_db_record_info_print->db_record_properties.deleted);
         printf("key_size: %" PRIu32 "\n", p_db_record_info_print->db_record_properties.key_size);
@@ -268,6 +271,8 @@ void test_faciledb_insert_case2()
 
     FacileDB_Api_Init(test_db_directory);
     FacileDB_Api_Insert_Element(db_set_name, &data1);
+    // delay 2ms
+    sleep(2);
     FacileDB_Api_Insert_Element(db_set_name, &data2);
     FacileDB_Api_Close();
 

@@ -1,5 +1,5 @@
-#ifndef __DB_H__
-#define __DB_H__
+#ifndef __FACILEDB_H__
+#define __FACILEDB_H__
 
 #include <stdint.h>
 #include <stdio.h>
@@ -104,4 +104,4 @@ typedef struct
     DB_SET_PROPERTIES_T db_set_properties;
 } DB_SET_INFO_T;
 
-#endif // __DB_H__
+#endif // __FACILEDB_H__

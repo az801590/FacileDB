@@ -5,20 +5,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// #include <time.h>
-// #include <sys/stat.h>
-// #include <sys/types.h>
-// #include <dirent.h>
-// #include <fcntl.h>
-// #include <unistd.h>
-// #include <sys/mman.h>
-// #include <stdint.h>
-// #include <regex.h>
-// #include <ctype.h>
-
-#include "db_utils.h"
+#include "faciledb.h"
+#include "faciledb_utils.h"
 #include "index.h"
-#include "facile_db.h"
 
 #ifndef DB_SET_INFO_INSTANCE_NUM
 #define DB_SET_INFO_INSTANCE_NUM (1)
@@ -313,6 +302,8 @@ DB_SET_INFO_T *load_db_set_info(char *p_db_set_name)
     }
     else
     {
+        uint64_t current_time = 0;
+
         // db set file doesn't exist. Create a new db set file.
         p_db_set_info->file = fopen(db_set_file_path, "wb+");
         if (p_db_set_info->file == NULL)
@@ -326,9 +317,11 @@ DB_SET_INFO_T *load_db_set_info(char *p_db_set_name)
         // store the db_set_name without the '\0'.
         // TODO: Setup variables
         allocate_db_set_properties_resources(&(p_db_set_info->db_set_properties), strlen(p_db_set_name));
+        current_time = get_current_time();
         p_db_set_info->db_set_properties.set_name_size = strlen(p_db_set_name);
         memcpy(p_db_set_info->db_set_properties.p_set_name, p_db_set_name, p_db_set_info->db_set_properties.set_name_size);
-        // p_db_set_info->db_set_properties.created_time = ;
+        p_db_set_info->db_set_properties.created_time = current_time;
+        p_db_set_info->db_set_properties.modified_time = current_time;
         write_db_set_properties(p_db_set_info);
     }
 
@@ -796,6 +789,7 @@ void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_facile
     uint8_t *p_db_block_write = new_db_block.block_data;
     uint8_t *p_db_block_end = new_db_block.block_data + DB_BLOCK_DATA_SIZE;
     uint64_t prev_block_tag = 0;
+    uint64_t current_time = 0;
 
     db_block_init(&new_db_block);
     new_db_block.record_properties_num = 0;
@@ -875,16 +869,20 @@ void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_facile
     }
 
     // write the last block into disk.
+    current_time = (uint64_t)get_current_time();
+
     p_db_set_info->db_set_properties.block_num++;
     new_db_block.block_tag = p_db_set_info->db_set_properties.block_num;
     new_db_block.prev_block_tag = prev_block_tag;
     new_db_block.next_block_tag = 0;
     new_db_block.deleted = 0;
     new_db_block.valid_record_num = faciledb_record_length;
-    // new_db_block.created_time = ;
-    // new_db_block.modified_time = ;
+    new_db_block.created_time = current_time;
+    new_db_block.modified_time = current_time;
     write_db_block(&new_db_block, p_db_set_info);
 
+    // update db_set_properties time records
+    p_db_set_info->db_set_properties.modified_time = current_time;
     write_db_set_properties(p_db_set_info);
 
     // update the next block tag of each db blocks.
@@ -893,32 +891,6 @@ void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_facile
     // free db block resources if needed.
     // currently there is no dynamic resources in db block structure.
 }
-
-// x
-// void insert_db_records_handler(DB_SET_INFO_T *p_db_set_info, uint64_t block_tag, uint64_t prev_block_tag, DB_RECORD_T *p_db_records, uint32_t db_record_length)
-// {
-//     DB_BLOCK_T db_block;
-//     uint8_t *p_block_data = NULL;
-//     db_block_init(&db_block);
-
-//     db_block.block_tag = block_tag;
-//     db_block.deleted = 0;
-//     db_block.prev_block_tag = prev_block_tag;
-//     // update next_block_tag later using update_db_block_next_block_tag function.
-//     // db_block.created_time = ;
-//     // db_block.modified_time = ;
-//     db_block.record_num = db_record_length;
-
-//     p_block_data = db_block.block_data;
-//     for(uint32_t i = 0; (i < db_record_length) && (p_block_data < (db_block.block_data + DB_BLOCK_DATA_SIZE)); i++)
-//     {
-//         uint32_t current_record_size = get_db_record_static_variables_size() + p_db_records[i].key_size + p_db_records[i].value_size;
-//         memcpy(p_block_data, &(p_db_records[i]), current_record_size);
-//         p_block_data += current_record_size;
-//     }
-
-//     write_db_block(&db_block, p_db_set_info);
-// }
 
 // traverse backward
 void update_db_block_next_block_tag(uint64_t block_tag, uint64_t next_block_tag, DB_SET_INFO_T *p_db_set_info)

@@ -4,6 +4,6 @@
 #include <time.h>
 
 char *strTrim(char *input);
-time_t getTime();
+time_t get_current_time();
 
 #endif

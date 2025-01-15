@@ -1,6 +1,8 @@
 #include <time.h>
+#include <ctype.h>
+#include <string.h>
 
-#include "db_utils.h"
+#include "faciledb_utils.h"
 
 /*
 ** reference: (https://stackoverflow.com/questions/122616/how-do-i-trim-leading-trailing-whitespace-in-a-standard-way)
@@ -29,7 +31,7 @@ char *strTrim(char *input)
     return str;
 }
 
-time_t getTime()
+time_t get_current_time()
 {
     return time(NULL);
 }

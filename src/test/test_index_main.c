@@ -9,8 +9,6 @@
 #define INDEX_ORDER (3)
 #define INDEX_PAYLOAD_SIZE (8)
 
-#include "hash.c"
-#include "index_id_type_compare.c"
 #include "index.c"
 
 void test_start(char *case_name)
