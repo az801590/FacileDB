@@ -4,8 +4,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
+// DB_BLOCK_DATA_SIZE - 4 should be divided into 8.
 #ifndef DB_BLOCK_DATA_SIZE
-#define DB_BLOCK_DATA_SIZE (1024)
+#define DB_BLOCK_DATA_SIZE (1028)
 #endif
 
 #ifndef DB_FILE_PATH_BUFFER_LENGTH
@@ -13,7 +14,7 @@
 #endif
 
 #define DB_FILE_PATH_MAX_LENGTH (DB_FILE_PATH_BUFFER_LENGTH - 1)
-#define DB_RECORD_VALUE_TYPE_DYNAMIC_SIZE ((uint32_t)~0)
+#define DB_RECORD_VALUE_TYPE_DYNAMIC_SIZE (~0)
 
 typedef enum
 {
