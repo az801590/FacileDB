@@ -483,7 +483,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
     DB_BLOCK_T db_block;
     uint32_t record_num = 0;
     DB_RECORD_INFO_T *result = NULL;
-    // uint64_t next_block_tag = 0;
+    uint64_t next_block_tag = 0;
     uint8_t *p_block_data = NULL;
     uint8_t *p_block_end_address = NULL;
 
@@ -491,7 +491,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
     read_db_block(p_db_set_info, block_tag, &db_block);
     record_num = db_block.valid_record_num;
     result = malloc(record_num * sizeof(DB_RECORD_INFO_T));
-    // next_block_tag = db_block.next_block_tag;
+    next_block_tag = db_block.next_block_tag;
     p_block_data = db_block.block_data;
     p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
 
@@ -511,10 +511,15 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
         // check if valid record (deleted == false) and reaches to the valid one.
         while (find_valid_db_record == false)
         {
-            if (p_block_data + get_db_record_properties_size() > p_block_end_address)
+            if ((p_block_data + get_db_record_properties_size()) > p_block_end_address)
             {
                 // clear the current block and read next block from next_block_tag and update the variables.
-                assert(0);
+                // assert(0);
+                db_block_init(&db_block);
+                read_db_block(p_db_set_info, next_block_tag, &db_block);
+                next_block_tag = db_block.next_block_tag;
+                p_block_data = db_block.block_data;
+                p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
             }
 
             // check if the record deleted or not.
@@ -542,7 +547,12 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
                     if (forward_size == 0)
                     {
                         // p_block_data reaches the end of the block, load next block and update variables.
-                        assert(0);
+                        // assert(0);
+                        db_block_init(&db_block);
+                        read_db_block(p_db_set_info, next_block_tag, &db_block);
+                        next_block_tag = db_block.next_block_tag;
+                        p_block_data = db_block.block_data;
+                        p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
                     }
                     remaining_size -= forward_size;
                 }
@@ -557,7 +567,12 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
                     if (forward_size == 0)
                     {
                         // p_block_data reaches the end of the block, load next block and update variables.
-                        assert(0);
+                        // assert(0);
+                        db_block_init(&db_block);
+                        read_db_block(p_db_set_info, next_block_tag, &db_block);
+                        next_block_tag = db_block.next_block_tag;
+                        p_block_data = db_block.block_data;
+                        p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
                     }
                     remaining_size -= forward_size;
                 }
@@ -582,7 +597,13 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
             if (copy_size == 0)
             {
                 // read next block and update variables.
-                assert(0);
+                // assert(0);
+                db_block_init(&db_block);
+                read_db_block(p_db_set_info, next_block_tag, &db_block);
+                next_block_tag = db_block.next_block_tag;
+                p_block_data = db_block.block_data;
+                p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
+
                 continue;
             }
 
@@ -602,7 +623,12 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
             if (copy_size == 0)
             {
                 // read next block and update variables.
-                assert(0);
+                // assert(0);
+                db_block_init(&db_block);
+                read_db_block(p_db_set_info, next_block_tag, &db_block);
+                next_block_tag = db_block.next_block_tag;
+                p_block_data = db_block.block_data;
+                p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
             }
 
             p_value = result[i].db_record.p_value + result[i].db_record_properties.value_size - remaining_size;
@@ -852,7 +878,6 @@ void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_facile
             memcpy(p_db_block_write, p_value, copy_size);
             p_db_block_write += copy_size;
             remaining_size -= copy_size;
-            printf("copy: %d\n", copy_size);
         }
 
         free_db_record_info_resources(&record_info);
