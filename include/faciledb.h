@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-// DB_BLOCK_DATA_SIZE - 4 should be divided into 8.
 #ifndef DB_BLOCK_DATA_SIZE
 #define DB_BLOCK_DATA_SIZE (1028)
 #endif
@@ -79,6 +78,7 @@ typedef struct
 typedef struct
 {
     uint64_t block_tag; // 1-based number, block_tag = 0 means null
+    uint64_t data_tag; // 1-based number
     uint64_t prev_block_tag;
     uint64_t next_block_tag;
     uint64_t created_time;
@@ -95,6 +95,7 @@ typedef struct
     uint64_t block_num;
     uint64_t created_time;
     uint64_t modified_time;
+    uint64_t valid_record_num;
     uint32_t set_name_size;
     void *p_set_name;
 } DB_SET_PROPERTIES_T;

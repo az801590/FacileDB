@@ -7,7 +7,7 @@
 #define __FACILEDB_TEST__
 // #define __PRINT_DETAILS__
 #define DB_SET_INFO_INSTANCE_NUM (1)
-#define DB_BLOCK_DATA_SIZE (4 * 4 + 6 + 6)
+#define DB_BLOCK_DATA_SIZE ((16 + 6 + 6) * 2 - 4) // 52
 
 #include "faciledb.c"
 
@@ -24,6 +24,7 @@ void test_end(char *case_name)
 void check_faciledb_properties(DB_SET_PROPERTIES_T *p_db_set_properties_1, DB_SET_PROPERTIES_T *p_db_set_properties_2)
 {
     assert(p_db_set_properties_1->block_num == p_db_set_properties_2->block_num);
+    assert(p_db_set_properties_1->valid_record_num == p_db_set_properties_2->valid_record_num);
     assert(p_db_set_properties_1->set_name_size == p_db_set_properties_2->set_name_size);
     assert(memcmp(p_db_set_properties_1->p_set_name, p_db_set_properties_2->p_set_name, p_db_set_properties_1->set_name_size) == 0);
 
@@ -34,6 +35,7 @@ void check_faciledb_properties(DB_SET_PROPERTIES_T *p_db_set_properties_1, DB_SE
     printf("block_num: %" PRIu64 "\n", p_db_set_properties_print->block_num);
     printf("created_time: %" PRIu64 "\n", p_db_set_properties_print->created_time);
     printf("modified_time: %" PRIu64 "\n", p_db_set_properties_print->modified_time);
+    printf("valid_record_num: %" PRIu64 "\n", p_db_set_properties_print->valid_record_num);
     printf("set_name_size: %" PRIu32 "\n", p_db_set_properties_print->set_name_size);
 
     p_set_name_buffer = calloc(p_db_set_properties_print->set_name_size + 1, sizeof(uint8_t));
@@ -47,6 +49,7 @@ void check_faciledb_properties(DB_SET_PROPERTIES_T *p_db_set_properties_1, DB_SE
 void check_faciledb_block(DB_BLOCK_T *p_db_block_1, DB_BLOCK_T *p_db_block_2)
 {
     assert(p_db_block_1->block_tag == p_db_block_2->block_tag);
+    assert(p_db_block_1->data_tag == p_db_block_2->data_tag);
     assert(p_db_block_1->prev_block_tag == p_db_block_2->prev_block_tag);
     assert(p_db_block_1->next_block_tag == p_db_block_2->next_block_tag);
     assert(p_db_block_1->deleted == p_db_block_2->deleted);
@@ -58,6 +61,7 @@ void check_faciledb_block(DB_BLOCK_T *p_db_block_1, DB_BLOCK_T *p_db_block_2)
 #if defined(__PRINT_DETAILS__)
     DB_BLOCK_T *p_db_block_print = p_db_block_1;
     printf("block_tag: %" PRIu64 "\n", p_db_block_print->block_tag);
+    printf("data_tag: %" PRId64 "\n", p_db_block_print->data_tag);
     printf("prev_block_tag: %" PRIu64 "\n", p_db_block_print->prev_block_tag);
     printf("next_block_tag: %" PRIu64 "\n", p_db_block_print->next_block_tag);
     printf("created_time: %" PRIu64 "\n", p_db_block_print->created_time);
@@ -141,6 +145,7 @@ void test_faciledb_close()
     test_end(case_name);
 }
 
+// one data each with one block.
 void test_faciledb_insert_case1()
 {
     char case_name[] = "test_faciledb_insert_case1";
@@ -152,7 +157,7 @@ void test_faciledb_insert_case1()
         .data_num = 1,
         .p_data_records = (FACILEDB_RECORD_T[]){
             {
-                .key_size = (1 + 1),
+                .key_size = 2, // 'a' and '\0'
                 .p_key = (void *)"a",
                 .value_size = sizeof(uint32_t),
                 .record_value_type = FACILEDB_RECORD_VALUE_TYPE_UINT32,
@@ -178,6 +183,7 @@ void test_faciledb_insert_case1()
     // clang-format off
     DB_SET_PROPERTIES_T expect_db_set_properties = {
         .block_num = 1,
+        .valid_record_num = 1,
         .set_name_size = strlen(db_set_name),
         .p_set_name = db_set_name
     };
@@ -189,6 +195,7 @@ void test_faciledb_insert_case1()
     // clang-format off
     DB_BLOCK_T expected_db_block = {
         .block_tag = 1,
+        .data_tag = 1,
         .prev_block_tag = 0,
         .next_block_tag = 0,
         .deleted = 0,
@@ -231,12 +238,13 @@ void test_faciledb_insert_case1()
     test_end(case_name);
 }
 
-void test_faciledb_insert_case1_string()
+// One data each with one block that record value type is string.
+void test_faciledb_insert_case2()
 {
-    char case_name[] = "test_faciledb_insert_case1_string";
+    char case_name[] = "test_faciledb_insert_case2";
     test_start(case_name);
 
-    char db_set_name[] = "test_db_insert_case1_string";
+    char db_set_name[] = "test_db_insert_case2";
     // clang-format off
     FACILEDB_DATA_T data = {
         .data_num = 1,
@@ -268,6 +276,7 @@ void test_faciledb_insert_case1_string()
     // clang-format off
     DB_SET_PROPERTIES_T expect_db_set_properties = {
         .block_num = 1,
+        .valid_record_num = 1,
         .set_name_size = strlen(db_set_name),
         .p_set_name = db_set_name
     };
@@ -279,6 +288,7 @@ void test_faciledb_insert_case1_string()
     // clang-format off
     DB_BLOCK_T expected_db_block = {
         .block_tag = 1,
+        .data_tag = 1,
         .prev_block_tag = 0,
         .next_block_tag = 0,
         .deleted = 0,
@@ -321,12 +331,13 @@ void test_faciledb_insert_case1_string()
     test_end(case_name);
 }
 
-void test_faciledb_insert_case2()
+// Two data each with one block.
+void test_faciledb_insert_case4()
 {
-    char case_name[] = "test_faciledb_insert_case2";
+    char case_name[] = "test_faciledb_insert_case4";
     test_start(case_name);
 
-    char db_set_name[] = "test_db_insert_case2";
+    char db_set_name[] = "test_db_insert_case4";
     // clang-format off
     FACILEDB_DATA_T data1 = {
         .data_num = 1,
@@ -383,6 +394,7 @@ void test_faciledb_insert_case2()
     DB_SET_PROPERTIES_T expect_db_set_properties = {
         // might be 3
         .block_num = 2,
+        .valid_record_num = 2,
         .set_name_size = strlen(db_set_name),
         .p_set_name = db_set_name
     };
@@ -396,6 +408,7 @@ void test_faciledb_insert_case2()
         {
             // [0]
             .block_tag = 1,
+            .data_tag = 1,
             .prev_block_tag = 0,
             .next_block_tag = 0,
             .deleted = 0,
@@ -405,6 +418,7 @@ void test_faciledb_insert_case2()
         {
             // [1]
             .block_tag = 2,
+            .data_tag = 2,
             .prev_block_tag = 0,
             .next_block_tag = 0,
             .deleted = 0,
@@ -482,23 +496,23 @@ void test_faciledb_insert_case2()
     test_end(case_name);
 }
 
-// 1 record in 2 blocks
-void test_faciledb_insert_case1_2()
+// one data each with two blocks.
+void test_faciledb_insert_case3()
 {
-    char case_name[] = "test_faciledb_insert_case1_2";
+    char case_name[] = "test_faciledb_insert_case3";
     test_start(case_name);
 
-    char db_set_name[] = "test_db_insert_case1_2";
+    char db_set_name[] = "test_db_insert_case3";
     // clang-format off
     FACILEDB_DATA_T data = {
         .data_num = 1,
         .p_data_records = (FACILEDB_RECORD_T[]){
             {
-                .key_size = (1 + 1),
+                .key_size = 2, // 'a' + '\0'
                 .p_key = (void *)"a",
-                .value_size = (26 + 1),
+                .value_size = (26 * 3 + 1), // strlen + '\0'
                 .record_value_type = FACILEDB_RECORD_VALUE_TYPE_STRING,
-                .p_value = (void *)"abcdefghijklmnopqrstuvwxyz"
+                .p_value = (void *)"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
             }
         }
     };
@@ -521,6 +535,7 @@ void test_faciledb_insert_case1_2()
     // clang-format off
     DB_SET_PROPERTIES_T expect_db_set_properties = {
         .block_num = expect_block_num,
+        .valid_record_num = 1,
         .set_name_size = strlen(db_set_name),
         .p_set_name = db_set_name
     };
@@ -533,6 +548,7 @@ void test_faciledb_insert_case1_2()
     DB_BLOCK_T expected_db_block[2] = {
         {
             .block_tag = 1,
+            .data_tag = 1,
             .prev_block_tag = 0,
             .next_block_tag = 2,
             .deleted = 0,
@@ -541,6 +557,7 @@ void test_faciledb_insert_case1_2()
         },
         {
             .block_tag = 2,
+            .data_tag = 1,
             .prev_block_tag = 1,
             .next_block_tag = 0,
             .deleted = 0,
@@ -592,9 +609,11 @@ int main()
     test_faciledb_init();
     test_faciledb_close();
     test_faciledb_insert_case1();
-    test_faciledb_insert_case1_string();
+    test_faciledb_insert_case2();
 
-    test_faciledb_insert_case1_2();
+    test_faciledb_insert_case3();
+
+    printf("%d\n", get_db_record_properties_size());
 
     // test_faciledb_insert_case2();
 }
