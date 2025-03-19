@@ -39,6 +39,7 @@ void write_db_set_properties(DB_SET_INFO_T *p_db_set_info);
 void read_db_set_properties(DB_SET_INFO_T *p_db_set_info);
 void db_block_init(DB_BLOCK_T *p_db_block);
 off_t get_db_block_offset(DB_SET_PROPERTIES_T *p_db_set_properties, uint64_t block_tag);
+size_t get_db_block_size();
 void write_db_block(DB_BLOCK_T *p_db_block, DB_SET_INFO_T *p_db_set_info);
 void read_db_block(DB_SET_INFO_T *p_db_set_info, uint64_t block_tag, DB_BLOCK_T *p_db_block);
 DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_INFO_T *p_db_set_info, uint32_t *p_record_num);
@@ -461,9 +462,21 @@ void db_block_init(DB_BLOCK_T *p_db_block)
 off_t get_db_block_offset(DB_SET_PROPERTIES_T *p_db_set_properties, uint64_t block_tag)
 {
     size_t set_properties_size = get_db_set_properties_size(p_db_set_properties);
-    size_t block_size = sizeof(DB_BLOCK_T);
+    size_t block_size = get_db_block_size();
 
     return (set_properties_size + ((block_tag - 1) * block_size));
+}
+
+size_t get_db_block_size()
+{
+    DB_BLOCK_T dummy_db_block;
+    size_t attribute_size = sizeof(dummy_db_block.block_tag) + sizeof(dummy_db_block.data_tag) + sizeof(dummy_db_block.prev_block_tag) + sizeof(dummy_db_block.next_block_tag);
+    size_t time_attribute_size = sizeof(dummy_db_block.created_time) + sizeof(dummy_db_block.modified_time);
+    size_t other_attribute_size = sizeof(dummy_db_block.deleted) + sizeof(dummy_db_block.valid_record_num) + sizeof(dummy_db_block.record_properties_num);
+
+    size_t block_data_size = sizeof(dummy_db_block.block_data);
+
+    return (attribute_size + time_attribute_size + other_attribute_size + block_data_size);
 }
 
 // TODO: split each element for memory alignment
@@ -477,7 +490,24 @@ void write_db_block(DB_BLOCK_T *p_db_block, DB_SET_INFO_T *p_db_set_info)
     fseek(p_db_set_file, block_offset, SEEK_SET);
 
     // write static variables
-    fwrite(p_db_block, sizeof(DB_BLOCK_T), 1, p_db_set_file);
+    if(sizeof(DB_BLOCK_T) == get_db_block_size())
+    {
+        fwrite(p_db_block, sizeof(DB_BLOCK_T), 1, p_db_set_file);
+    }
+    else
+    {
+        fwrite(&(p_db_block->block_tag), sizeof(p_db_block->block_tag), 1, p_db_set_file);
+        fwrite(&(p_db_block->data_tag), sizeof(p_db_block->data_tag), 1, p_db_set_file);
+        fwrite(&(p_db_block->prev_block_tag), sizeof(p_db_block->prev_block_tag), 1, p_db_set_file);
+        fwrite(&(p_db_block->next_block_tag), sizeof(p_db_block->next_block_tag), 1, p_db_set_file);
+        fwrite(&(p_db_block->created_time), sizeof(p_db_block->created_time), 1, p_db_set_file);
+        fwrite(&(p_db_block->modified_time), sizeof(p_db_block->modified_time), 1, p_db_set_file);
+        fwrite(&(p_db_block->deleted), sizeof(p_db_block->deleted), 1, p_db_set_file);
+        fwrite(&(p_db_block->valid_record_num), sizeof(p_db_block->valid_record_num), 1, p_db_set_file);
+        fwrite(&(p_db_block->record_properties_num), sizeof(p_db_block->record_properties_num), 1, p_db_set_file);
+
+        fwrite(p_db_block->block_data, sizeof(p_db_block->block_data), 1, p_db_set_file);
+    }
 }
 
 // TODO: split each ement for memory alignment
@@ -489,7 +519,24 @@ void read_db_block(DB_SET_INFO_T *p_db_set_info, uint64_t block_tag, DB_BLOCK_T 
     fseek(p_db_set_file, block_offset, SEEK_SET);
 
     // read static variables
-    fread(p_db_block, sizeof(DB_BLOCK_T), 1, p_db_set_file);
+    if(sizeof(DB_BLOCK_T) == get_db_block_size())
+    {
+        fread(p_db_block, sizeof(DB_BLOCK_T), 1, p_db_set_file);
+    }
+    else
+    {
+        fread(&(p_db_block->block_tag), sizeof(p_db_block->block_tag), 1, p_db_set_file);
+        fread(&(p_db_block->data_tag), sizeof(p_db_block->data_tag), 1, p_db_set_file);
+        fread(&(p_db_block->prev_block_tag), sizeof(p_db_block->prev_block_tag), 1, p_db_set_file);
+        fread(&(p_db_block->next_block_tag), sizeof(p_db_block->next_block_tag), 1, p_db_set_file);
+        fread(&(p_db_block->created_time), sizeof(p_db_block->created_time), 1, p_db_set_file);
+        fread(&(p_db_block->modified_time), sizeof(p_db_block->modified_time), 1, p_db_set_file);
+        fread(&(p_db_block->deleted), sizeof(p_db_block->deleted), 1, p_db_set_file);
+        fread(&(p_db_block->valid_record_num), sizeof(p_db_block->valid_record_num), 1, p_db_set_file);
+        fread(&(p_db_block->record_properties_num), sizeof(p_db_block->record_properties_num), 1, p_db_set_file);
+
+        fread(p_db_block->block_data, sizeof(p_db_block->block_data), 1, p_db_set_file);
+    }
 }
 
 DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_INFO_T *p_db_set_info, uint32_t *p_record_num)
@@ -507,7 +554,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
     result = malloc(record_num * sizeof(DB_RECORD_INFO_T));
     next_block_tag = db_block.next_block_tag;
     p_block_data = db_block.block_data;
-    p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
+    p_block_end_address = ((uint8_t *)&(db_block)) + get_db_block_size();
 
     if (result == NULL)
     {
@@ -532,7 +579,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
                 read_db_block(p_db_set_info, next_block_tag, &db_block);
                 next_block_tag = db_block.next_block_tag;
                 p_block_data = db_block.block_data;
-                p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
+                p_block_end_address = ((uint8_t *)&(db_block)) + get_db_block_size();
             }
 
             // check if the record deleted or not.
@@ -564,7 +611,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
                         read_db_block(p_db_set_info, next_block_tag, &db_block);
                         next_block_tag = db_block.next_block_tag;
                         p_block_data = db_block.block_data;
-                        p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
+                        p_block_end_address = ((uint8_t *)&(db_block)) + get_db_block_size();
                     }
                     remaining_size -= forward_size;
                 }
@@ -583,7 +630,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
                         read_db_block(p_db_set_info, next_block_tag, &db_block);
                         next_block_tag = db_block.next_block_tag;
                         p_block_data = db_block.block_data;
-                        p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
+                        p_block_end_address = ((uint8_t *)&(db_block)) + get_db_block_size();
                     }
                     remaining_size -= forward_size;
                 }
@@ -612,7 +659,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
                 read_db_block(p_db_set_info, next_block_tag, &db_block);
                 next_block_tag = db_block.next_block_tag;
                 p_block_data = db_block.block_data;
-                p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
+                p_block_end_address = ((uint8_t *)&(db_block)) + get_db_block_size();
 
                 continue;
             }
@@ -637,7 +684,7 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
                 read_db_block(p_db_set_info, next_block_tag, &db_block);
                 next_block_tag = db_block.next_block_tag;
                 p_block_data = db_block.block_data;
-                p_block_end_address = ((uint8_t *)&(db_block)) + sizeof(DB_BLOCK_T);
+                p_block_end_address = ((uint8_t *)&(db_block)) + get_db_block_size();
             }
 
             p_value = result[i].db_record.p_value + result[i].db_record_properties.value_size - remaining_size;

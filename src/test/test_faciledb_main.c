@@ -5,9 +5,10 @@
 #include <unistd.h>
 
 #define __FACILEDB_TEST__
-// #define __PRINT_DETAILS__
+#define __PRINT_DETAILS__
 #define DB_SET_INFO_INSTANCE_NUM (1)
-#define DB_BLOCK_DATA_SIZE ((16 + 6 + 6) * 2 - 4) // 52
+// #define DB_BLOCK_DATA_SIZE ((16 + 6 + 6) * 2 - 4) // 52
+#define DB_BLOCK_DATA_SIZE  (50) // 49 ~ 
 
 #include "faciledb.c"
 
@@ -331,7 +332,7 @@ void test_faciledb_insert_case2()
     test_end(case_name);
 }
 
-// Two data each with one block.
+// One data each with one block.
 void test_faciledb_insert_case4()
 {
     char case_name[] = "test_faciledb_insert_case4";
@@ -604,16 +605,210 @@ void test_faciledb_insert_case3()
     test_end(case_name);
 }
 
+// One data with one block, and one data with two blocks.
+void test_faciledb_insert_case5()
+{
+    char case_name[] = "test_faciledb_insert_case5";
+    test_start(case_name);
+
+    char db_set_name[] = "test_db_insert_case5";
+    // clang-format off
+    FACILEDB_DATA_T data[] ={
+        {
+            .data_num = 1,
+            .p_data_records = (FACILEDB_RECORD_T[]){
+                {
+                    .key_size = 2, // 'a' + '\0'
+                    .p_key = (void *)"a",
+                    .value_size = (26 * 3 + 1), // strlen + '\0'
+                    .record_value_type = FACILEDB_RECORD_VALUE_TYPE_STRING,
+                    .p_value = (void *)"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+                }
+            }
+        },
+        {
+            .data_num = 2,
+            .p_data_records = (FACILEDB_RECORD_T[]){
+                {
+                    // [0]
+                    .key_size = 2,
+                    .p_key = (void *)"b",
+                    .record_value_type = FACILEDB_RECORD_VALUE_TYPE_UINT32,
+                    .value_size = 4,
+                    .p_value = (void *)&(uint32_t){2}
+                },
+                {
+                    // [1]
+                    .key_size = 2,
+                    .p_key = (void *)"c",
+                    .record_value_type = FACILEDB_RECORD_VALUE_TYPE_UINT32,
+                    .value_size = 4,
+                    .p_value = (void *)&(uint32_t){3}
+                }
+            }
+        }
+    };
+    // clang-format on
+
+    FacileDB_Api_Init(test_db_directory);
+    FacileDB_Api_Insert_Element(db_set_name, &(data[0]));
+    FacileDB_Api_Insert_Element(db_set_name, &(data[1]));
+    FacileDB_Api_Close();
+
+    // check
+    FacileDB_Api_Init(test_db_directory);
+
+    DB_SET_INFO_T *p_db_set_info = NULL;
+    // check db_set_info
+    p_db_set_info = load_db_set_info(db_set_name);
+    assert((p_db_set_info != NULL) && (p_db_set_info->file != NULL));
+
+    // check db_set_properties.
+    // clang-format off
+    DB_SET_PROPERTIES_T expect_db_set_properties = {
+        .block_num = 3,
+        .valid_record_num = 2,
+        .set_name_size = strlen(db_set_name),
+        .p_set_name = db_set_name
+    };
+    // clang-format on
+    check_faciledb_properties(&(p_db_set_info->db_set_properties), &expect_db_set_properties);
+
+    // check the db block.
+    DB_BLOCK_T db_block;
+    // clang-format off
+    DB_BLOCK_T expected_db_blocks[3] = {
+        {
+            // [0]
+            .block_tag = 1,
+            .data_tag = 1,
+            .prev_block_tag = 0,
+            .next_block_tag = 2,
+            .deleted = 0,
+            .valid_record_num = 1,
+            .record_properties_num = 1
+        },
+        {
+            // [1]
+            .block_tag = 2,
+            .data_tag = 1,
+            .prev_block_tag = 1,
+            .next_block_tag = 0,
+            .deleted = 0,
+            .valid_record_num = 1,
+            .record_properties_num = 0
+        },
+        {
+            // [2]
+            .block_tag = 3,
+            .data_tag = 2,
+            .prev_block_tag = 0,
+            .next_block_tag = 0,
+            .deleted = 0,
+            .valid_record_num = 2,
+            .record_properties_num = 2
+        }
+    };
+    // block_data
+    // memcpy()
+    DB_RECORD_INFO_T expected_db_records[3] = {
+        {
+            .db_record = {
+                .p_key = data[0].p_data_records->p_key,
+                .p_value = data[0].p_data_records->p_value
+            },
+            .db_record_properties = {
+                .deleted = 0,
+                .key_size = data[0].p_data_records->key_size,
+                .record_value_type = data[0].p_data_records->record_value_type,
+                .value_size = data[0].p_data_records->value_size
+            },
+            .db_record_properties_offset = get_db_block_offset(&(p_db_set_info->db_set_properties), 1) + (((uint64_t)&(expected_db_blocks[0].block_data)) - ((uint64_t)&(expected_db_blocks[0])))
+        },
+        {
+            .db_record = (DB_RECORD_T){
+                .p_key = data[1].p_data_records[0].p_key,
+                .p_value = data[1].p_data_records[0].p_value
+            },
+            .db_record_properties = (DB_RECORD_PROPERTIES_T){
+                .deleted = 0,
+                .key_size = data[1].p_data_records[0].key_size,
+                .record_value_type = data[1].p_data_records[0].record_value_type,
+                .value_size = data[1].p_data_records[0].value_size
+            },
+            .db_record_properties_offset = get_db_block_offset(&(p_db_set_info->db_set_properties), 3) + (((uint64_t)&(expected_db_blocks[3].block_data)) - ((uint64_t)&(expected_db_blocks[3])))
+        },
+        {
+            .db_record = {
+                .p_key = data[1].p_data_records[1].p_key,
+                .p_value = data[1].p_data_records[1].p_value
+            },
+            .db_record_properties = {
+                .deleted = 0,
+                .key_size = data[1].p_data_records[1].key_size,
+                .record_value_type = data[1].p_data_records[1].record_value_type,
+                .value_size = data[1].p_data_records[1].value_size
+            },
+            .db_record_properties_offset = get_db_block_offset(&(p_db_set_info->db_set_properties), 3) + (((uint64_t)&(expected_db_blocks[3].block_data)) - ((uint64_t)&(expected_db_blocks[3]))) + get_db_record_properties_size() + data[1].p_data_records[0].key_size + data[1].p_data_records[0].value_size
+        }
+    };
+    // clang-format on
+
+    // check db blocks
+    for (uint32_t i = 0; i < 3; i++)
+    {
+        db_block_init(&db_block);
+        read_db_block(p_db_set_info, i + 1, &db_block);
+        check_faciledb_block(&db_block, &(expected_db_blocks[i]));
+    }
+
+    // check the db records
+    {
+        // Record [0]
+        uint32_t record_num;
+        uint32_t expected_record_num;
+        DB_RECORD_INFO_T *p_db_records_info = NULL;
+
+        // Record [0]
+        record_num = 0;
+        expected_record_num = 1; // 1 record in block_tag: 1.
+        p_db_records_info = extract_db_records_from_db_blocks(expected_db_blocks[0].block_tag, p_db_set_info, &record_num);
+
+        check_faciledb_records(p_db_records_info, record_num, &(expected_db_records[0]), expected_record_num);
+
+        for (uint32_t i = 0; i < record_num; i++)
+        {
+            free_db_record_info_resources(&(p_db_records_info[i]));
+        }
+
+        // Record [1] and [2]
+        record_num = 0;
+        expected_record_num = 2; // 2 records in block_tag: 3.
+        p_db_records_info = extract_db_records_from_db_blocks(expected_db_blocks[2].block_tag, p_db_set_info, &record_num);
+
+        check_faciledb_records(p_db_records_info, record_num, &(expected_db_records[1]), expected_record_num);
+
+        for (uint32_t i = 0; i < record_num; i++)
+        {
+            free_db_record_info_resources(&(p_db_records_info[i]));
+        }
+    }
+
+    FacileDB_Api_Close();
+
+    test_end(case_name);
+}
+
 int main()
 {
+    printf("%ld\n", sizeof(DB_BLOCK_T));
+
     test_faciledb_init();
     test_faciledb_close();
     test_faciledb_insert_case1();
     test_faciledb_insert_case2();
-
     test_faciledb_insert_case3();
+    test_faciledb_insert_case4();
 
-    printf("%d\n", get_db_record_properties_size());
-
-    // test_faciledb_insert_case2();
+    test_faciledb_insert_case5();
 }
