@@ -15,6 +15,10 @@
 #define DB_FILE_PATH_MAX_LENGTH (DB_FILE_PATH_BUFFER_LENGTH - 1)
 #define DB_RECORD_VALUE_TYPE_DYNAMIC_SIZE (~0)
 
+#ifndef ENABLE_DB_INDEX
+#define ENABLE_DB_INDEX (0)
+#endif
+
 typedef enum
 {
 #ifdef FACILEDB_RECORD_VALUE_TYPE_CONFIG
@@ -87,7 +91,7 @@ typedef struct
     uint32_t valid_record_num;
     uint32_t record_properties_num; // numbers of record in the data block
 
-    uint8_t block_data[DB_BLOCK_DATA_SIZE]; // contains lots of db records.
+    uint8_t block_data[DB_BLOCK_DATA_SIZE / sizeof(uint8_t)]; // contains lots of db records.
 } DB_BLOCK_T;
 
 typedef struct

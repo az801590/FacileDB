@@ -7,7 +7,10 @@
 
 #include "faciledb.h"
 #include "faciledb_utils.h"
+
+#if ENABLE_DB_INDEX
 #include "index.h"
+#endif
 
 #ifndef DB_SET_INFO_INSTANCE_NUM
 #define DB_SET_INFO_INSTANCE_NUM (1)
