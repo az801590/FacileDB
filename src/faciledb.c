@@ -1,3 +1,5 @@
+#include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -19,6 +21,16 @@
 // static variables
 static DB_SET_INFO_T db_set_info_instance[DB_SET_INFO_INSTANCE_NUM];
 static char db_directory_path[DB_FILE_PATH_BUFFER_LENGTH] = {0};
+// clang-format off
+static const uint32_t db_record_value_size[FACILEDB_RECORD_VALUE_TYPE_NUM] = {
+#ifdef FACILEDB_RECORD_VALUE_TYPE_CONFIG
+#undef FACILEDB_RECORD_VALUE_TYPE_CONFIG
+#endif
+#define FACILEDB_RECORD_VALUE_TYPE_CONFIG(faciledb_record_value_type, faciledb_record_value_type_size, faciledb_record_value_type_compare_function) faciledb_record_value_type_size,
+#include "faciledb_record_value_type_table.h"
+#undef FACILEDB_RECORD_VALUE_TYPE_CONFIG
+};
+// clang-format on
 // End of static vaiables
 
 // Local function declaration
@@ -49,11 +61,12 @@ DB_RECORD_INFO_T *extract_db_records_from_db_blocks(uint64_t block_tag, DB_SET_I
 void db_record_info_init(DB_RECORD_INFO_T *p_db_record_info);
 bool allocate_db_record_info_resources(DB_RECORD_INFO_T *p_db_record_info);
 void free_db_record_info_resources(DB_RECORD_INFO_T *p_db_record_info);
+bool faciledb_record_to_db_record_info(FACILEDB_RECORD_T *p_faciledb_record, DB_RECORD_INFO_T *p_db_record_info);
 size_t get_db_record_properties_size();
 void db_record_init(DB_RECORD_T *p_db_record);
 bool allocate_db_record_resources(DB_RECORD_T *p_db_record, uint32_t key_size, uint32_t value_size);
 void free_db_record_resources(DB_RECORD_T *p_db_record);
-void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_faciledb_records, uint32_t faciledb_record_length, uint64_t da_tag);
+uint32_t insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_faciledb_records, uint32_t faciledb_record_length, uint64_t da_tag);
 void update_db_block_next_block_tag(uint64_t block_tag, uint64_t next_block_tag, DB_SET_INFO_T *p_db_set_info);
 uint64_t insert_db_records_handler_write_new_db_block(DB_BLOCK_T *p_db_block, DB_SET_INFO_T *p_db_set_info);
 void insert_db_records_handler_assign_db_block_value(DB_BLOCK_T *p_db_block, uint64_t prev_block_tag, uint32_t valid_record_num, uint64_t data_tag);
@@ -81,14 +94,15 @@ bool FacileDB_Api_Check_Set_Exist(char *p_db_set_name)
     return is_db_set_file_exist(db_set_file_path);
 }
 
-bool FacileDB_Api_Insert_Element(char *p_db_set_name, FACILEDB_DATA_T *p_faciledb_data)
+uint32_t FacileDB_Api_Insert_Element(char *p_db_set_name, FACILEDB_DATA_T *p_faciledb_data)
 {
-    DB_SET_INFO_T *p_db_set_info = NULL;
     uint64_t data_tag = 0;
+    DB_SET_INFO_T *p_db_set_info = NULL;
+    uint32_t insert_data_num = 0;
 
     if (check_db_directory_init() == false || p_faciledb_data == NULL || p_faciledb_data->data_num == 0)
     {
-        return false;
+        return 0;
     }
 
     p_db_set_info = query_db_set_info_loaded(p_db_set_name, strlen(p_db_set_name));
@@ -99,19 +113,19 @@ bool FacileDB_Api_Insert_Element(char *p_db_set_name, FACILEDB_DATA_T *p_faciled
         if (p_db_set_info == NULL)
         {
             // load db set fail.
-            return false;
+            return 0;
         }
     }
 
     data_tag = add_db_set_properties_valid_record_num(&(p_db_set_info->db_set_properties));
 
-    insert_db_records(p_db_set_info, p_faciledb_data->p_data_records, p_faciledb_data->data_num, data_tag);
+    insert_data_num = insert_db_records(p_db_set_info, p_faciledb_data->p_data_records, p_faciledb_data->data_num, data_tag);
 
     // write due to add valid record number.
     // TODO: update when close operation.
     write_db_set_properties(p_db_set_info);
 
-    return true;
+    return insert_data_num;
 }
 
 bool set_db_directory_path(char *p_db_directory_path)
@@ -482,7 +496,6 @@ size_t get_db_block_size()
     return (attribute_size + time_attribute_size + other_attribute_size + block_data_size);
 }
 
-// TODO: split each element for memory alignment
 void write_db_block(DB_BLOCK_T *p_db_block, DB_SET_INFO_T *p_db_set_info)
 {
     FILE *p_db_set_file = p_db_set_info->file;
@@ -493,7 +506,7 @@ void write_db_block(DB_BLOCK_T *p_db_block, DB_SET_INFO_T *p_db_set_info)
     fseek(p_db_set_file, block_offset, SEEK_SET);
 
     // write static variables
-    if(sizeof(DB_BLOCK_T) == get_db_block_size())
+    if (sizeof(DB_BLOCK_T) == get_db_block_size())
     {
         fwrite(p_db_block, sizeof(DB_BLOCK_T), 1, p_db_set_file);
     }
@@ -513,7 +526,6 @@ void write_db_block(DB_BLOCK_T *p_db_block, DB_SET_INFO_T *p_db_set_info)
     }
 }
 
-// TODO: split each ement for memory alignment
 void read_db_block(DB_SET_INFO_T *p_db_set_info, uint64_t block_tag, DB_BLOCK_T *p_db_block)
 {
     FILE *p_db_set_file = p_db_set_info->file;
@@ -522,7 +534,7 @@ void read_db_block(DB_SET_INFO_T *p_db_set_info, uint64_t block_tag, DB_BLOCK_T 
     fseek(p_db_set_file, block_offset, SEEK_SET);
 
     // read static variables
-    if(sizeof(DB_BLOCK_T) == get_db_block_size())
+    if (sizeof(DB_BLOCK_T) == get_db_block_size())
     {
         fread(p_db_block, sizeof(DB_BLOCK_T), 1, p_db_set_file);
     }
@@ -825,10 +837,16 @@ void free_db_record_info_resources(DB_RECORD_INFO_T *p_db_record_info)
     free_db_record_resources(&(p_db_record_info->db_record));
 }
 
-void faciledb_record_to_db_record_info(FACILEDB_RECORD_T *p_faciledb_record, DB_RECORD_INFO_T *p_db_record_info)
+bool faciledb_record_to_db_record_info(FACILEDB_RECORD_T *p_faciledb_record, DB_RECORD_INFO_T *p_db_record_info)
 {
     DB_RECORD_PROPERTIES_T *p_db_record_properties = &(p_db_record_info->db_record_properties);
     DB_RECORD_T *p_db_record = &(p_db_record_info->db_record);
+
+    if (db_record_value_size[p_faciledb_record->record_value_type] != FACILEDB_RECORD_VALUE_TYPE_DYNAMIC_SIZE &&
+        db_record_value_size[p_faciledb_record->record_value_type] != p_faciledb_record->value_size)
+    {
+        return false;
+    }
 
     p_db_record_properties->deleted = 0;
     p_db_record_properties->key_size = p_faciledb_record->key_size;
@@ -838,17 +856,20 @@ void faciledb_record_to_db_record_info(FACILEDB_RECORD_T *p_faciledb_record, DB_
     allocate_db_record_resources(p_db_record, p_db_record_properties->key_size, p_db_record_properties->value_size);
     memcpy(p_db_record->p_key, p_faciledb_record->p_key, p_db_record_properties->key_size);
     memcpy(p_db_record->p_value, p_faciledb_record->p_value, p_db_record_properties->value_size);
+
+    return true;
 }
 
 // p_faciledb_records: array of faciledb_records
 // faciledb_record_length: length of the db_records array,the value should greater than 0.
-void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_faciledb_records, uint32_t faciledb_record_length, uint64_t data_tag)
+uint32_t insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_faciledb_records, uint32_t faciledb_record_length, uint64_t data_tag)
 {
     DB_BLOCK_T new_db_block;
     uint8_t *p_db_block_write = new_db_block.block_data;
     uint8_t *p_db_block_end = new_db_block.block_data + DB_BLOCK_DATA_SIZE;
     size_t db_record_properties_size = get_db_record_properties_size();
     uint64_t last_block_tag = 0;
+    uint32_t insert_record_num = 0;
 
     db_block_init(&new_db_block);
     // Init the db_block and set first block prev/next block tag as 0.
@@ -857,9 +878,16 @@ void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_facile
     {
         uint32_t remaining_size = 0;
         DB_RECORD_INFO_T record_info;
+        bool valid_faciledb_record;
 
         db_record_info_init(&record_info);
-        faciledb_record_to_db_record_info(&(p_faciledb_records[i]), &record_info);
+        valid_faciledb_record = faciledb_record_to_db_record_info(&(p_faciledb_records[i]), &record_info);
+
+        if(valid_faciledb_record == false)
+        {
+            // invalid record_value_type or invalid record_value_size
+            continue;
+        }
 
         if ((p_db_block_write + db_record_properties_size) > p_db_block_end)
         {
@@ -940,6 +968,7 @@ void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_facile
         }
 
         free_db_record_info_resources(&record_info);
+        insert_record_num++;
     }
 
     last_block_tag = insert_db_records_handler_write_new_db_block(&new_db_block, p_db_set_info);
@@ -949,6 +978,7 @@ void insert_db_records(DB_SET_INFO_T *p_db_set_info, FACILEDB_RECORD_T *p_facile
 
     // free db block resources if needed.
     // currently there is no dynamic resources in db block structure.
+    return insert_record_num;
 }
 
 // traverse backward
